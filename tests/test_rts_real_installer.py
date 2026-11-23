@@ -94,7 +94,7 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and 'snapshot M2.5' in state['warnings'][-1],state['warnings']
+assert state['warnings'] and 'snapshot M2.6' in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))

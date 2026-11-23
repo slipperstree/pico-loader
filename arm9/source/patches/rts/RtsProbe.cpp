@@ -206,8 +206,8 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_SNAPSHOT
     rtsProbeMessage((header->flags&RTS_M2_FLAG_NO_READBACK)
-        ? "RTS research: snapshot M2.5\nFAST: no full readback.\nCapture only, NO load yet.\nHold L+R+Down+A.\nOn S8, read code, press B."
-        : "RTS research: snapshot M2.5\nFULL: write + readback.\nCapture only, NO load yet.\nHold L+R+Down+A.\nOn S8, read code, press B.");
+        ? "RTS research: snapshot M2.6\nFAST: no full readback.\nCapture only, NO load yet.\nHold L+R+Down+A.\nOn S8, read code, press B."
+        : "RTS research: snapshot M2.6\nFULL: write + readback.\nCapture only, NO load yet.\nHold L+R+Down+A.\nOn S8, read code, press B.");
 #else
     rtsProbeMessage("RTS research: CPU probe M1\nNOT save/load states yet.\nHold L+R+Down+A.\nDim/pause about 3 seconds,\nthen continue automatically.");
 #endif

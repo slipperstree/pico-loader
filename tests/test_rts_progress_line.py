@@ -15,9 +15,10 @@ for line in subprocess.check_output([prefix+'nm',str(folder/'worker.elf')],text=
 base=0x023fa000
 for offset in meta['relocations']:
     value=struct.unpack_from('<I',blob,offset)[0];struct.pack_into('<I',blob,offset,value+base-meta['link_base'])
-for stage,value in ((1,0),(3,0),(5,1234),(6,8256),(8,2),(9,4)):
+for stage,value in ((1,0),(3,0),(5,1234),(6,8256),(8,2),(9,4006)):
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.mem_map(0x02000000,0x400000);u.mem_map(0x06840000,0x20000)
     u.mem_write(base,b'\0'*meta['memory_bytes']);u.mem_write(base,bytes(blob))
+    u.mem_write(base+symbols['ioState']-meta['link_base']+12,struct.pack('<I',8273))
     original=bytes([0x6a])*0x20000;u.mem_write(0x06840000,original)
     done=0x020f0000;u.mem_write(done,b'\x70\x47');state={'done':False,'writes':0}
     def stop(uc,addr,size,data):state['done']=True;uc.emu_stop()
@@ -35,6 +36,11 @@ for stage,value in ((1,0),(3,0),(5,1234),(6,8256),(8,2),(9,4)):
     for y in range(8):
         for x in range(96):white+=screen[(y*256+x)*2:(y*256+x)*2+2]==b'\xff\xff'
     assert white>50
+    if stage==9:
+        for x,bits in enumerate((0x21,0x41,0x45,0x4b,0x31)): # Last digit of failing sector 8273.
+            for y in range(7):
+                pos=(y*256+14*6+x)*2
+                assert screen[pos:pos+2]==(b'\xff\xff' if bits&(1<<y) else b'\x00\x80')
     if stage==8:
         # A readable B acknowledgement replaces the irrelevant payload total.
         for x,bits in enumerate((0x7f,0x49,0x49,0x49,0x36)):

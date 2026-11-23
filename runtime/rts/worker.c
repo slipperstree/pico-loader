@@ -28,6 +28,10 @@ _Static_assert(offsetof(WorkerState,header)==sizeof(RtsSnapshotInfo)+8,"M2 heade
 WorkerState gRtsM2;
 volatile u32 gRtsM2Frames[8] __attribute__((aligned(32))); // Dedicated cache line, ARM7 writes word 0.
 u32 gRtsM2Stack[256] __attribute__((aligned(8)));
+#define IO_TIMEOUT_FRAMES 180u
+#define IO_CLOCK_STALL_SPINS 0x00100000u
+static struct {u32 started,last,spins,sector,error;} ioState;
+static void heartbeat(u32 index);
 
 void* memcpy(void* dst,const void* src,size_t size)
 {
@@ -75,7 +79,11 @@ static void progress(u32 stage,u32 value)
     // 'M2 S5 0128/8288'. A stationary stage identifies where a fault happened.
     u8 text[15]={'M','2',' ','S',(u8)('0'+stage),' ','0','0','0','0','/','8','2','8','8'};
     static const u16 place[4]={1000,100,10,1};
-    for(u32 i=0;i<4;++i){u8 digit=0;while(value>=place[i]){value-=place[i];++digit;}text[6+i]='0'+digit;}
+    for(u32 field=0;field<(stage==9 ? 2u : 1u);++field)
+    {
+        u32 number=field ? ioState.sector : value;
+        for(u32 i=0;i<4;++i){u8 digit=0;while(number>=place[i]){number-=place[i];++digit;}text[(field ? 11 : 6)+i]='0'+digit;}
+    }
     if(stage==8){text[10]=' ';text[11]='B';text[12]=' ';text[13]=' ';text[14]=' ';}
     volatile u16* fb=(volatile u16*)0x06840000;
     for(u32 y=0;y<8;++y)for(u32 x=0;x<96;++x)fb[y*256+x]=0x8000;
@@ -131,11 +139,29 @@ static int mapSector(u32 index,u32* result)
     }
     return 0;
 }
-static u32 ioBudget;
-static int waitBits(u32 bits,u32 desired)
+// A CPU-speed-independent deadline spans the entire sector transaction.
+// The spin fallback applies only if the independent ARM7 frame clock stops.
+static void beginIo(u32 sector)
 {
-    for(u32 i=0;i<WAIT_LIMIT && ioBudget;++i,--ioBudget)if((REG32(CARDCTRL)&bits)==desired)return 1;
-    return 0;
+    ioState.started=ioState.last=gRtsM2Frames[0];
+    ioState.spins=IO_CLOCK_STALL_SPINS;ioState.sector=sector;ioState.error=0;
+}
+static int ioWaitAllowed(u32 reason)
+{
+    u32 now=gRtsM2Frames[0];
+    if(now-ioState.started>=IO_TIMEOUT_FRAMES){ioState.error=reason;return 0;}
+    if(now!=ioState.last)
+    {
+        ioState.last=now;ioState.spins=IO_CLOCK_STALL_SPINS;
+        heartbeat((now&1u)*16u);
+    }
+    else if(!ioState.spins--){ioState.error=7;return 0;}
+    return 1;
+}
+static int waitBits(u32 bits,u32 desired,u32 reason)
+{
+    while((REG32(CARDCTRL)&bits)!=desired)if(!ioWaitAllowed(reason))return 0;
+    return 1;
 }
 static void command(u32 first,u32 argument,u32 settings)
 {
@@ -148,44 +174,44 @@ static void command(u32 first,u32 argument,u32 settings)
 }
 static int ready(void)
 {
-    for(u32 i=0;i<4096 && ioBudget;++i)
+    for(;;)
     {
         command(0xe4,0,0xa7446000);
-        if(!waitBits(0x00800000,0x00800000))return 0;
+        if(!waitBits(0x00800000,0x00800000,4))return 0;
         u32 response=REG32(DATA);
-        if(!waitBits(0x80000000,0))return 0;
+        if(!waitBits(0x80000000,0,5))return 0;
         if(response)return 1;
-        --ioBudget;
+        if(!ioWaitAllowed(6))return 0;
     }
     return 0;
 }
 static int readSector(u32 index,u32* out)
 {
+    beginIo(index);
     u32 sector;
-    if(!mapSector(index,&sector))return 0;
-    ioBudget=WAIT_LIMIT;
+    if(!mapSector(index,&sector)){ioState.error=1;return 0;}
     command(0xe3,sector,0xa0406000);
-    if(!waitBits(0x80000000,0) || !ready())return 0;
+    if(!waitBits(0x80000000,0,3) || !ready())return 0;
     command(0xe5,0,0xa1444000);
     for(u32 i=0;i<128;++i)
     {
-        if(!waitBits(0x00800000,0x00800000))return 0;
+        if(!waitBits(0x00800000,0x00800000,2))return 0;
         out[i]=REG32(DATA);
     }
-    return waitBits(0x80000000,0);
+    return waitBits(0x80000000,0,3);
 }
 static int writeSector(u32 index,const u32* src)
 {
+    beginIo(index);
     u32 sector;
-    if(!mapSector(index,&sector))return 0;
-    ioBudget=WAIT_LIMIT;
+    if(!mapSector(index,&sector)){ioState.error=1;return 0;}
     command(0x9b0de1f6,sector,0xe1486000);
     for(u32 i=0;i<128;++i)
     {
-        if(!waitBits(0x00800000,0x00800000))return 0;
+        if(!waitBits(0x00800000,0x00800000,2))return 0;
         REG32(DATA)=src[i];
     }
-    return waitBits(0x80000000,0) && ready();
+    return waitBits(0x80000000,0,3) && ready();
 }
 static void heartbeat(u32 index)
 {
@@ -202,6 +228,7 @@ static void signalDone(void)
 }
 __attribute__((noreturn)) static void fault(u32 code)
 {
+    if(ioState.error)code=code*1000+ioState.error;
     gRtsM2.header.error=code;
     if(gRtsM2.videoActive)progress(9,code);
     REG16(IPC)=(REG16(IPC)&~0xf00u)|0xe00;

@@ -81,7 +81,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     expected=bytearray(u.mem_read(0x02000000,0x400000))
     expected[base-0x02000000:base-0x02000000+workbytes]=b'\0'*workbytes
     state={'mode':'idle','word':0,'sector':0,'read_sector':0,'peer':12,'own':10,
-           'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[],'ack_reads':[],'heartbeats':0,'exmem':initial_exmem,'exmem_writes':[]}
+           'writes':[],'commands':0,'polls':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[],'ack_reads':[],'heartbeats':0,'exmem':initial_exmem,'exmem_writes':[]}
     if settle_dma and not foreign:raise AssertionError('Use foreign guard to test settling without a second full dump')
     control=0x0005707d
     cp={(2,0,1):0x42,(3,0,0):2,(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0 if bad_tcm else 0x20}
@@ -97,7 +97,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     # Use a monotonically increasing modeled frame clock for transfer timing;
     # the real ARM7 polling/counter loop is exercised by the rendezvous test.
     clock=base+meta['clock_offset']
-    def frame_read(uc,access,addr,size,value,data):uc.mem_write(clock,struct.pack('<I',state['commands']))
+    def frame_read(uc,access,addr,size,value,data):uc.mem_write(clock,struct.pack('<I',state['polls']//64))
     u.hook_add(UC_HOOK_MEM_READ,frame_read,begin=clock,end=clock+3)
     # Actual A2GJ SDK MPU regions after the secure stub opens region 2.
     regions=[0x04000033,0x0200002b,0,0x08000035,0x027c001b,0x0100002f,0xffff001d,0x027ff017]
@@ -124,7 +124,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     progress_address=base+symbols['progress']-meta['link_base']
     u.hook_add(UC_HOOK_CODE,stage_call,begin=progress_address,end=progress_address)
     fault=base+symbols['fault']-meta['link_base']
-    u.hook_add(UC_HOOK_CODE,stopped,begin=fault,end=fault)
+    # Execute the real fault body through S9 rendering and the fault IPC signal.
     def read(uc,access,addr,size,value,data):
         if addr==0x04000204:
             uc.mem_write(addr,struct.pack('<H',state['exmem']))
@@ -143,6 +143,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         if addr==0x04000180:
             uc.mem_write(addr,struct.pack('<H',0x4000|(state['own']<<8)|state['peer']))
         elif addr==0x040001a4:
+            state['polls']+=1
             active=state['mode'] in ('write','poll','read')
             value=0x80800000 if active else 0
             if timeout and state['mode']=='poll':value=0x80000000
@@ -163,7 +164,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             assert base<=addr and addr+size<=base+workbytes,('Game RAM modified',hex(addr))
             current_sp=uc.reg_read(UC_ARM_REG_SP)
             if base<=current_sp<base+workbytes:assert stack_start<=current_sp<=stack_start+1024,('Worker stack escaped',hex(current_sp))
-            assert stack_start<=addr and addr+size<=stack_start+1024 or cfg<=addr or base+symbols['ioBudget']-meta['link_base']<=addr<base+symbols['ioBudget']-meta['link_base']+4,('Worker code overwritten / stack overflow',hex(addr))
+            assert stack_start<=addr and addr+size<=stack_start+1024 or cfg<=addr or base+symbols['ioState']-meta['link_base']<=addr<base+symbols['ioState']-meta['link_base']+20,('Worker code overwritten / stack overflow',hex(addr))
         elif addr==0x04000204:
             assert (value^initial_exmem)&~0x800==0, 'Other EXMEM bits changed'
             state['exmem_writes'].append(value)
@@ -175,6 +176,10 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             state['own']=(value>>8)&15
             assert value&0x4000,'IPCSYNC IRQ control lost'
             if state['own']==13:state['peer']=0
+            elif state['own']==14:
+                state['fault']=struct.unpack('<I',uc.mem_read(cfg+296+18*4,4))[0]
+                assert state['stages'][-1]==(9,state['fault'])
+                uc.emu_stop()
         elif addr==0x040001a4 and value&0x80000000:
             assert state['exmem']&0x800==0 and state['peer']==12, 'Card used without parked ARM7 and ARM9 ownership'
             assert cp[(1,0,0)]&0x1001==0x1001 and not cp[(1,0,0)]&4
@@ -229,10 +234,10 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert state['exmem']&0x800==0
         assert struct.unpack('<I',u.mem_read(0x04000000,4))[0]==0x000a0000, 'Error display closed before ownership restore'
     elif foreign or corrupt or timeout or zero_ready:
-        assert state['fault']==(2 if foreign else 6 if corrupt else 1),state
+        assert state['fault']==(2 if foreign else 6 if corrupt else 1004 if timeout else 1006),state
         assert not state['done'] and 2 not in state['header_phases']
         if foreign or timeout or zero_ready:assert not state['writes']
-        if zero_ready:assert state['commands']<=4098
+        if zero_ready:assert 4096<state['commands']<6000
     else:
         assert state['done'] and state['fault'] is None,state
         assert state['header_phases']==[1,2],state['header_phases']
@@ -283,7 +288,7 @@ if '--zero-ready-only' not in sys.argv:
     run_case('corrupt readback never commits completion',corrupt=True)
     run_case('transport timeout fails closed without any write',timeout=True)
     print('Actual SD timing, cache coherency, MPU/TCM mappings and console hardware remain unvalidated.')
-run_case('continuous SD-not-ready response terminates within shared retry budget',zero_ready=True)
+run_case('continuous SD-not-ready response terminates within physical frame deadline',zero_ready=True)
 run_case('active display capture declines without SD access',display_capture=True)
 run_case('ARM7 DMA refusal never issues SD commands',arm7_reason=512)
 run_case('ARM7 sound capture refusal never issues SD commands',arm7_reason=1024)
