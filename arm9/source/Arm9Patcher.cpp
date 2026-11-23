@@ -34,6 +34,9 @@
 #include "patches/platform/LoaderPlatform.h"
 #include "errorDisplay/ErrorDisplay.h"
 #include "Arm9Patcher.h"
+#ifdef PICO_RTS_PROBE
+#include "patches/rts/RtsProbe.h"
+#endif
 
 #define PARENT_SECTION_START    0x02001000
 #define PARENT_SECTION_END      0x02003000
@@ -235,6 +238,9 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
     {
         ErrorDisplay().PrintError("Failed to apply arm9 patches.");
     }
+#ifdef PICO_RTS_PROBE
+    if (!runInDSiMode) InstallRtsProbeArm9(patchContext, romHeader, arm9Size);
+#endif
     dc_flushAll();
     dc_drainWriteBuffer();
     ic_invalidateAll();

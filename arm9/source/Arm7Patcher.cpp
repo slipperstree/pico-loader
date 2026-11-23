@@ -18,6 +18,9 @@
 #include "patches/arm7/PokemonDownloaderArm7Patch.h"
 #include "patches/arm7/cheats/CheatEnginePatch.h"
 #include "Arm7Patcher.h"
+#ifdef PICO_RTS_PROBE
+#include "patches/rts/RtsProbe.h"
+#endif
 
 static u32 correctAddress(u32 address, const nds_header_ntr_t* romHeader)
 {
@@ -178,6 +181,9 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         {
             ErrorDisplay().PrintError("Failed to apply arm7 patches.");
         }
+#ifdef PICO_RTS_PROBE
+        if (!runInDSiMode) InstallRtsProbeArm7(patchContext, cheatsLength);
+#endif
         dc_flushAll();
         dc_drainWriteBuffer();
         ic_invalidateAll();

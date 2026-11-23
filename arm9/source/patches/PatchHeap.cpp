@@ -48,6 +48,17 @@ void PatchHeap::AddFreeSpace(void* block, u32 size)
 
 void* PatchHeap::Alloc(u32 size)
 {
+    void* result = TryAlloc(size);
+    if (!result)
+    {
+        LOG_FATAL("No space found to put patch of size 0x%x\n", size);
+        while (1);
+    }
+    return result;
+}
+
+void* PatchHeap::TryAlloc(u32 size)
+{
     PatchHeapBlock* prev = nullptr;
     PatchHeapBlock* cur = _freeBlocks;
 
@@ -70,8 +81,6 @@ void* PatchHeap::Alloc(u32 size)
 
     if (!bestBlock)
     {
-        LOG_FATAL("No space found to put patch of size 0x%x\n", size);
-        while (1);
         return nullptr;
     }
 

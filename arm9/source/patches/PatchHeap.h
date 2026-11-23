@@ -19,6 +19,9 @@ public:
     /// @return A pointer to the allocated block if successful, or nullptr otherwise.
     void* Alloc(u32 size);
 
+    // Optional patches may fail without blocking the game.
+    void* TryAlloc(u32 size);
+
 private:
     struct PatchHeapBlock
     {
