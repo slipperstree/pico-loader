@@ -1,13 +1,14 @@
-"""Read-only checker for M2 diagnostic captures. Never restores console memory."""
+"""Read-only checker for M2/M3 diagnostic captures. Never restores console memory."""
 import json,struct,sys,zlib
 from pathlib import Path
 
 def check(path):
     data=Path(path).read_bytes()
-    if len(data) not in (0x40c200,0x424400):raise ValueError(f'文件大小不符：{len(data)}')
+    if len(data) not in (0x40c200,0x424400,0x4c9600):raise ValueError(f'文件大小不符：{len(data)}')
     h=struct.unpack_from('<128I',data)
-    m3=h[0]==0x31435452
-    expected=(0x31435452,0x30001,0x424400,0x4a473241) if m3 else (0x324d5452,0x20001,0x40c200,0x4a473241)
+    m32=h[0]==0x32565452
+    m3=h[0] in (0x31435452,0x32565452)
+    expected=(0x32565452,0x30002,0x4c9600,0x4a473241) if m32 else (0x31435452,0x30001,0x424400,0x4a473241) if m3 else (0x324d5452,0x20001,0x40c200,0x4a473241)
     if h[:4]!=expected or len(data)!=expected[2] or h[5]!=len(data)-512:
         raise ValueError('文件标识或版本不符')
     if h[4]!=2:raise ValueError('尚未完成快照写入' if h[4]==0 else f'快照未完成或校验未通过（阶段 {h[4]}）')
@@ -40,6 +41,18 @@ def check(path):
         result['capture']+=' + ARM7 parked/banked context + 64KiB private WRAM + 32KiB shared WRAM'
         result['arm7']={'park_sp':f'{a[2]:08X}','mode':f'{a[3]&31:02X}','wram_allocation':a[5],'private_bytes':65536,'shared_bytes':32768}
         result['status']='M3.1 extended diagnostic capture only; game-state load is not implemented'
+    if m32:
+        if h[50:53]!=(0x31434456,0x424200,0xa5200):raise ValueError('显示分段布局不符')
+        v=struct.unpack_from('<128I',data,512+0x424200)
+        if v[:5]!=(0x31434456,1,0xa4000,2048,2048):raise ValueError('显示数据标识或长度不符')
+        if any(x>255 for x in v[9:18]) or v[11]&0x87==0x82 or v[12]&0x87==0x82:raise ValueError('显存分配不受支持')
+        if any(x>65535 for x in v[7:9]) or v[18]>65535 or v[19]!=3:raise ValueError('显示控制布局不符')
+        result['capture']+=' + 656KiB VRAM + standard palette/OAM + readable display metadata'
+        result['video']={'vram_bytes':v[2],'palette_bytes':v[3],'oam_bytes':v[4],
+                         'display_main':f'{v[5]:08X}','display_sub':f'{v[6]:08X}',
+                         'brightness':[f'{x:04X}' for x in v[7:9]],'vram_controls':[f'{x:02X}' for x in v[9:18]],
+                         'write_only_and_hidden_state_captured':False}
+        result['status']='M3.2 video-memory diagnostic capture only; game-state load is not implemented'
     if h[42]==0x31544650:
         result['timing_frames']={'write':h[43],'readback':h[44],'through_payload':h[45]}
         result['timing_seconds_approx_60hz']={k:round(v/60,2) for k,v in result['timing_frames'].items()}

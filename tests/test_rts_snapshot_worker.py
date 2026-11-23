@@ -6,12 +6,13 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent/'rts/pydeps'))
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
-args=[a for a in sys.argv[1:] if a not in ('--zero-ready-only','--restore-failure-only','--fast-only','--m3')]
+args=[a for a in sys.argv[1:] if a not in ('--zero-ready-only','--restore-failure-only','--fast-only','--m3','--m32')]
 root=Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain=os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
-M3='--m3' in sys.argv
-folder=root/('build/rts-worker-m3' if M3 else 'build/rts-worker')
+M32='--m32' in sys.argv
+M3='--m3' in sys.argv or M32
+folder=root/('build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
 meta=json.loads((folder/'RtsM2Image.json').read_text())
 original=(folder/'worker.bin').read_bytes()
 symbols={}
@@ -23,7 +24,8 @@ for line in subprocess.check_output([prefix+'objdump','-d',str(folder/'worker.el
     if re.search(r'\b(mrc|mcr)\b',line):coprocessor.append(int(line.split(':')[0].strip(),16)-meta['link_base'])
 MAGIC,VERSION,GAME=0x324d5452,0x20001,0x4a473241
 if M3:MAGIC,VERSION=0x31435452,0x30001
-PAYLOAD=0x424200 if M3 else 0x40c000
+if M32:MAGIC,VERSION=0x32565452,0x30002
+PAYLOAD=0x4c9400 if M32 else 0x424200 if M3 else 0x40c000
 SECTORS=1+PAYLOAD//512
 REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
       UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,
@@ -31,15 +33,29 @@ REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
 EXTENTS=[(2048,0x1000),(4096,0x3000),(SECTORS-6144,0x6000)]
 ALLOWED=[first+i for count,first in EXTENTS for i in range(count)]
 
-def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False,held_b=False,bad_tcm=False,owner_stuck=False,restore_stuck=False,fast=False,corrupt_write=False):
+def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False,held_b=False,bad_tcm=False,owner_stuck=False,restore_stuck=False,fast=False,corrupt_write=False,arm7_vram=False):
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
-    for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027c0000,0x4000),(0x06840000,0x20000),
+    for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027c0000,0x4000),(0x06800000,0xa4000) if M32 else (0x06840000,0x20000),
+                      (0x05000000,0x1000),(0x07000000,0x1000),
                       (0x04000000,0x2000),(0x04100000,0x1000)]:u.mem_map(addr,size)
     main=bytes(range(256))*16384
     itcm=bytes(reversed(range(256)))*128
     u.mem_write(0x02000000,main);u.mem_write(0x01ff8000,itcm)
     u.mem_write(0x027c0000,b'\x5a'*0x4000)
     video=bytes(range(256))*512
+    if M32:
+        physical_video=bytes((i*31+i//512)%256 for i in range(0xa4000))
+        palette=bytes((i*17+91)%256 for i in range(2048));oam=bytes((i*7+113)%256 for i in range(2048))
+        u.mem_write(0x06800000,physical_video);video=physical_video[0x40000:0x60000]
+        u.mem_write(0x05000000,palette);u.mem_write(0x07000000,oam)
+        controls=[0x81,0x8a,0x84,0x94,0x83,0x85,0x8d,0x82,0x83]
+        control_addrs=[0x04000240,0x04000241,0x04000242,0x04000243,0x04000244,0x04000245,0x04000246,0x04000248,0x04000249]
+        if arm7_vram:controls[3]=0x82
+        for a,v in zip(control_addrs,controls):u.mem_write(a,bytes([v]))
+        u.mem_write(0x04000247,b'\x03')
+        u.mem_write(0x04001000,struct.pack('<I',0x00010200))
+        u.mem_write(0x04000304,struct.pack('<H',0x820f))
+        for i in range(8):u.mem_write(0x04000008+(i&3)*2+(0x1000 if i>=4 else 0),struct.pack('<H',0x1230+i))
     u.mem_write(0x06840000,video)
     u.mem_write(0x04000000,struct.pack('<I',0x00110800))
     u.mem_write(0x0400006c,struct.pack('<H',0x8008))
@@ -223,14 +239,14 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
                 if state['sector']==ALLOWED[0]:state['header_phases'].append(struct.unpack_from('<I',state['buffer'],16)[0])
     u.hook_add(UC_HOOK_MEM_WRITE,write,begin=0x02000000,end=0x04100013)
     u.emu_start(base+meta['entry_offset'],0,count=1500000000)
-    if badmap or busy or display_capture or arm7_reason or bad_tcm or owner_stuck:
+    if badmap or busy or display_capture or arm7_reason or bad_tcm or owner_stuck or arm7_vram:
         assert state['done'] and not state['writes'] and not state['commands'],state
         if owner_stuck:assert (8,2) in state['stages']
         if bad_tcm:assert (8,1) in state['stages']
         if arm7_reason==4096:assert (8,4096) in state['stages'] and not state['exmem_writes']
         assert state['exmem']==initial_exmem
         if badmap:assert (8,256) in state['stages']
-        if busy or display_capture or (arm7_reason & (512|1024)):
+        if busy or display_capture or (arm7_reason & (512|1024)) or arm7_vram:
             assert state['brightness'].count((0x0400006c,0x400c))==3
             assert state['brightness'].count((0x0400106c,0x400c))==3
             assert not state['stages'], 'Unsafe VRAM remap during DMA/capture refusal'
@@ -264,7 +280,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         else:assert header[6]==zlib.crc32(blob[512:])
         if fast:
             assert header[17]==0 and not any(stage==6 for stage,_ in state['stages'])
-            assert state['commands']<(17500 if M3 else 17000), 'Fast mode performed full payload readback'
+            assert state['commands']<SECTORS*2+20, 'Fast mode performed full payload readback'
             assert header[44]==0
         else:assert header[17]==header[6] and header[44]>0
         assert header[42]==0x31544650 and header[43]>0 and header[45]>=header[43]
@@ -274,8 +290,19 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         if M3:
             assert blob[512+0x40c000:512+0x40c200]==arm7.context
             assert blob[512+0x40c200:512+0x41c200]==arm7.beforePrivate
-            assert blob[-0x8000:]==arm7.shared
+            assert blob[512+0x41c200:512+0x424200]==arm7.shared
             assert header[46:50]==(0x31433741,0x40c000,512,0x18000)
+        if M32:
+            at=512+0x424200;v=struct.unpack_from('<128I',blob,at)
+            assert v[:9]==(0x31434456,1,0xa4000,2048,2048,0x00110800,0x00010200,0x4003,0x8002),v[:9]
+            assert v[9:18]==tuple(controls) and v[18:20]==(0x820f,3)
+            assert v[20:28]==tuple(0x1230+i for i in range(8))
+            assert header[50:53]==(0x31434456,0x424200,0xa5200)
+            assert blob[at+512:at+512+0xa4000]==physical_video,'Original VRAM not preserved (progress overlay leaked?)'
+            assert blob[at+512+0xa4000:at+512+0xa4800]==palette
+            assert blob[-2048:]==oam
+            assert bytes(u.mem_read(0x06800000,0xa4000))==physical_video,'Capture changed physical VRAM'
+            assert [u.mem_read(a,1)[0] for a in control_addrs]==controls,'VRAM mappings not restored'
         assert header[20:24]==tuple(frame[6:10])
         assert header[24:32]==tuple(original_regs[4:12])
         assert header[33]==sp+48 and header[36]==frame[4] and header[38]==0x023e0021
@@ -290,6 +317,11 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert struct.unpack('<H',u.mem_read(0x0400006c,2))[0]==0x8008
         (folder/('model-snapshot-fast-corrupt.bin' if corrupt_write else 'model-snapshot-fast.bin' if fast else 'model-snapshot.bin')).write_bytes(blob)
     print('PASS',label,'commands',state['commands'],'file-sector writes',len(state['writes']),flush=True)
+
+if M32:
+    run_case('M3.2 VRAM C/D owned by ARM7 declines without changing mappings',arm7_vram=True)
+    run_case('M3.2 complete fast capture includes all original VRAM, palette and OAM',owner7=True,fast=True)
+    raise SystemExit(0)
 
 if M3 and '--fast-only' in sys.argv:
     run_case('M3 final candidate fast capture with actual ARM7 helper',owner7=True,fast=True)

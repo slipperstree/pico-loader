@@ -5,6 +5,10 @@
 #include "RtsArm7Capture.h"
 volatile RtsArm7Mailbox gRtsArm7Mailbox __attribute__((aligned(32)));
 #endif
+#ifdef PICO_RTS_VIDEO_CAPTURE
+#include "RtsVideoCapture.h"
+RtsVideoCapture gRtsVideo;
+#endif
 typedef uint32_t u32;
 typedef uint16_t u16;
 typedef uint8_t u8;
@@ -89,7 +93,11 @@ static void progress(u32 stage,u32 value)
 #endif
     ,' ','S',(u8)('0'+stage),' ','0','0','0','0','/','8','2','8','8'};
 #ifdef PICO_RTS_ARM7_CAPTURE
-    text[11]='8';text[12]='4';text[13]='8';text[14]='1'; // total payload sectors
+    #ifdef PICO_RTS_VIDEO_CAPTURE
+    text[11]='9';text[12]='8';text[13]='0';text[14]='2';
+#else
+    text[11]='8';text[12]='4';text[13]='8';text[14]='1';
+#endif
 #endif
     static const u16 place[4]={1000,100,10,1};
     for(u32 field=0;field<(stage==9 ? 2u : 1u);++field)
@@ -303,7 +311,7 @@ static void showRefusal(u32 reason)
 {
     // A live DMA/capture may own VRAM. In that case use only the same readable
     // brightness controls as M1, and leave all VRAM mappings untouched.
-    if(reason & (0xf0u|512u|1024u|2048u))
+    if(reason & (0xf0u|512u|1024u|2048u|16384u))
     {
         u16 a=REG16(0x0400006c),b=REG16(0x0400106c);
         for(u32 n=0;n<3;++n)
@@ -329,7 +337,7 @@ __attribute__((noinline)) static const u32* arm7Block(u32 block)
     __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(0):"memory");
     m->command=1;
     __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(0):"memory");
-    beginIo(RTS_M2_FILE_SECTORS-RTS_ARM7_BLOCKS+block);
+    beginIo(0x40c200/512+1+block);
     while(m->completed!=request)if(!ioWaitAllowed(8))fault(8);
     m->command=0;
     if(m->status){ioState.error=20+m->status;fault(8);}
@@ -351,6 +359,9 @@ void rtsM2Run(const u32* entryRegs)
     u32 reason=asynchronousBusy();
     if((control&0x50001)!=0x50001 || (dtcm&0x3f)!=10 || itcm!=0x20 ||
        (dtcm&~0xfffu)<0x02400000 || (dtcm&~0xfffu)>0x02ffc000)reason|=1;
+#ifdef PICO_RTS_VIDEO_CAPTURE
+    if(!RtsPrepareVideoCapture(&gRtsVideo,frame[0],frame[1]))reason|=16384;
+#endif
     u16 oldExmem=REG16(0x04000204);
     // ARM7 publishes into an otherwise read-only cache line. Invalidate only
     // that line before reading the shared diagnostic word; never clean stale data.
@@ -404,6 +415,9 @@ void rtsM2Run(const u32* entryRegs)
     h->reserved[8]=0x31433741; // ARM7 context marker and fixed diagnostic layout.
     h->reserved[9]=0x40c000;h->reserved[10]=512;h->reserved[11]=0x18000;
 #endif
+#ifdef PICO_RTS_VIDEO_CAPTURE
+    h->reserved[12]=RTS_VIDEO_MAGIC;h->reserved[13]=0x424200;h->reserved[14]=RTS_VIDEO_SECTION_BYTES;
+#endif
     h->reserved[4]=RTS_M2_TIMING_MAGIC;
     u32 started=gRtsM2Frames[0];
     u16 aux=REG16(0x040001a0);
@@ -439,7 +453,16 @@ void rtsM2Run(const u32* entryRegs)
         else if(index<0x40c000/512)src=(const u32*)(0x01ff8000+(index-(0x400000+0x4000)/512)*512);
 #ifdef PICO_RTS_ARM7_CAPTURE
         else if(index==0x40c000/512)src=(const u32*)&gRtsArm7Mailbox.context;
-        else src=arm7Block(index-0x40c000/512-1);
+        else if(index<0x424200/512)src=arm7Block(index-0x40c000/512-1);
+#ifdef PICO_RTS_VIDEO_CAPTURE
+        else if(index==0x424200/512)src=(const u32*)&gRtsVideo;
+        else
+        {
+            if(!RtsReadVideoSector(&gRtsVideo,index-0x424200/512-1,(u16*)s->readback,s->videoBackup))
+            {ioState.error=26;fault(8);}
+            src=s->readback;
+        }
+#endif
 #endif
         value=crc(value,src,128);
         if(!writeSector(index+1,src))fault(4);

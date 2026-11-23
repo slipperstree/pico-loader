@@ -15,6 +15,17 @@
 #define RTS_M2_VERSION 0x00030001u
 #define RTS_M2_PAYLOAD_BYTES (0x400000u + 0x4000u + 0x8000u + 512u + 0x18000u)
 #endif
+#ifdef PICO_RTS_VIDEO_CAPTURE
+#ifndef PICO_RTS_ARM7_CAPTURE
+#error Video extension requires ARM7 capture
+#endif
+#undef RTS_M2_MAGIC
+#undef RTS_M2_VERSION
+#undef RTS_M2_PAYLOAD_BYTES
+#define RTS_M2_MAGIC 0x32565452u
+#define RTS_M2_VERSION 0x00030002u
+#define RTS_M2_PAYLOAD_BYTES 0x4c9400u
+#endif
 #define RTS_M2_FILE_BYTES (512u + RTS_M2_PAYLOAD_BYTES)
 #define RTS_M2_FILE_SECTORS (RTS_M2_FILE_BYTES / 512u)
 #define RTS_M2_MAX_EXTENTS 32u
@@ -23,7 +34,9 @@
 #define RTS_M2_FLAG_DIAGNOSTIC 1u
 #define RTS_M2_FLAG_NO_READBACK 2u
 #define RTS_M2_TIMING_MAGIC 0x31544650u // PFT1: physical frame timing
-#ifdef PICO_RTS_ARM7_CAPTURE
+#ifdef PICO_RTS_VIDEO_CAPTURE
+#define RTS_M2_FILE_PATH "/_pico/RTS-A2GJ-M3V.bin"
+#elif defined(PICO_RTS_ARM7_CAPTURE)
 #define RTS_M2_FILE_PATH "/_pico/RTS-A2GJ-M3.bin"
 #else
 #define RTS_M2_FILE_PATH "/_pico/RTS-A2GJ-M2.bin"

@@ -1,18 +1,26 @@
 WONDERFUL_TOOLCHAIN ?= /opt/wonderful
 PREFIX := $(WONDERFUL_TOOLCHAIN)/toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-
-RTS_BUILD := $(if $(filter 1,$(PICO_RTS_ARM7_CAPTURE)),build/rts-worker-m3,build/rts-worker)
+RTS_BUILD := $(if $(filter 1,$(PICO_RTS_ARM7_CAPTURE)),$(if $(filter 1,$(PICO_RTS_VIDEO_CAPTURE)),build/rts-worker-m32,build/rts-worker-m3),build/rts-worker)
 ifeq ($(PICO_RTS_ARM7_CAPTURE),1)
 RTS_EXTRA_FLAGS := -DPICO_RTS_ARM7_CAPTURE
 RTS_EXTRA_OBJ := $(RTS_BUILD)/arm7-capture.o
+endif
+ifeq ($(PICO_RTS_VIDEO_CAPTURE),1)
+RTS_EXTRA_FLAGS += -DPICO_RTS_VIDEO_CAPTURE
+RTS_EXTRA_OBJ += $(RTS_BUILD)/video-capture.o
 endif
 RTS_FLAGS := -mcpu=arm946e-s -marm -Os -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-tree-loop-distribute-patterns -ffunction-sections -fdata-sections -Icommon -Wall -Wextra
 
 .PHONY: all
 all: $(RTS_BUILD)/RtsM2Image.h
 
-$(RTS_BUILD)/worker.o: runtime/rts/worker.c common/RtsSnapshotInfo.h common/RtsArm7Capture.h
+$(RTS_BUILD)/worker.o: runtime/rts/worker.c common/RtsSnapshotInfo.h common/RtsArm7Capture.h common/RtsVideoCapture.h
 	mkdir -p $(RTS_BUILD)
 	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_EXTRA_FLAGS) -std=c17 -c $< -o $@
+
+$(RTS_BUILD)/video-capture.o: runtime/rts/video-capture.c common/RtsVideoCapture.h
+	mkdir -p $(RTS_BUILD)
+	$(PREFIX)gcc $(RTS_FLAGS) -std=c17 -c $< -o $@
 
 $(RTS_BUILD)/entry.o: runtime/rts/worker-entry.s
 	mkdir -p $(RTS_BUILD)

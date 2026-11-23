@@ -64,7 +64,9 @@ or save-state implementation code is copied.
    CPU context, banked registers and IRQ return state. ARM9 cannot simply read
    private ARM7 WRAM; it needs an ARM7-side staging protocol that preserves the
    paused frame and keeps both CPUs on controlled stacks during restore.
-2. Capture VRAM, palettes, OAM, relevant display/3D state, IRQ/timer/IPC state,
+2. M3.2 now captures original VRAM, palettes, OAM and bounded readable display
+   metadata; hardware capture validation remains. Still capture the relevant
+   write-only display/3D state, IRQ/timer/IPC state,
    and sound state. A raw MMIO dump is insufficient for write-only, write-one-
    to-clear or hidden device state; unsupported states need explicit limits.
 3. Define an extended M3 checkpoint with section bounds/CRCs, exact ROM/build/
@@ -79,3 +81,6 @@ or save-state implementation code is copied.
 The next hardware-testable checkpoint version must capture the extra state
 first, so it will require a new save. Keeping M2.6 working while developing
 the missing pieces avoids presenting this CPU primitive as a working load.
+
+M3.1 hardware capture passed (CRC AC5B6BD9, about 15.35 s);
+[M3.2 display capture](rts-video-capture-m32.md) is the next integrated candidate.

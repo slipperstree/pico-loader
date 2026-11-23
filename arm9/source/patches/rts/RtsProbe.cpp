@@ -214,7 +214,11 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_SNAPSHOT
 #ifdef PICO_RTS_ARM7_CAPTURE
+#ifdef PICO_RTS_VIDEO_CAPTURE
+    rtsProbeMessage("RTS research: capture M3.2\nARM7 + VRAM/palette/OAM.\nCapture only, NO load yet.\nHold L+R+Down+A.");
+#else
     rtsProbeMessage("RTS research: capture M3.1\nARM7 context + WRAM added.\nCapture only, NO load yet.\nHold L+R+Down+A.\nS8 8192: WRAM/mode guard.");
+#endif
 #else
     rtsProbeMessage((header->flags&RTS_M2_FLAG_NO_READBACK)
         ? "RTS research: snapshot M2.6\nFAST: no full readback.\nCapture only, NO load yet.\nHold L+R+Down+A.\nOn S8, read code, press B."

@@ -8,14 +8,15 @@ sys.path.insert(0, str(Path(__file__).parent / 'pydeps'))
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
 
-args = [arg for arg in sys.argv[1:] if arg not in ('--m2','--m3')]
+args = [arg for arg in sys.argv[1:] if arg not in ('--m2','--m3','--m32')]
 root = Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain = os.environ.get('WONDERFUL_TOOLCHAIN', 'C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix = os.environ.get('ARM_NONE_EABI_PREFIX', str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
-M3 = '--m3' in sys.argv
+M32 = '--m32' in sys.argv
+M3 = '--m3' in sys.argv or M32
 M2 = '--m2' in sys.argv or M3
 WORKER_TICKS=2400 if M3 else 600
-elf = root/('build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf' if M2 else 'build/picoLoader9_DSPICO_rts_probe.elf')
+elf = root/('build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf' if M2 else 'build/picoLoader9_DSPICO_rts_probe.elf')
 syms = {}
 for line in subprocess.check_output([prefix+'nm', str(elf)], text=True).splitlines():
     p = line.split()
@@ -65,7 +66,7 @@ if M2:
 
 if M3:
     import json
-    folder=root/'build/rts-worker-m3'
+    folder=root/('build/rts-worker-m32' if M32 else 'build/rts-worker-m3')
     meta=json.loads((folder/'RtsM2Image.json').read_text())
     image=bytearray((folder/'worker.bin').read_bytes())
     for offset in meta['relocations']:

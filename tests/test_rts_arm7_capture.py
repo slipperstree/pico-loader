@@ -4,7 +4,7 @@ from pathlib import Path
 from arm7_capture_model import Arm7CaptureModel,REGS
 from unicorn.arm_const import *
 r=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parents[1]
-folder=r/'build/rts-worker-m3';meta=json.loads((folder/'RtsM2Image.json').read_text());image=(folder/'worker.bin').read_bytes()
+folder=r/('build/rts-worker-m32' if '--m32' in sys.argv else 'build/rts-worker-m3');meta=json.loads((folder/'RtsM2Image.json').read_text());image=(folder/'worker.bin').read_bytes()
 for mode in (31,18):
  a=Arm7CaptureModel(image,meta,mode=mode);h=struct.unpack('<128I',a.context)
  assert h[:6]==(0x31433741,1,a.parkSp,0xa0000000|mode,1,3)

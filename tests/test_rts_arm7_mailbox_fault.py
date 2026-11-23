@@ -4,7 +4,7 @@ from pathlib import Path
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
 r=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parents[1]
-f=r/'build/rts-worker-m3';meta=json.loads((f/'RtsM2Image.json').read_text());base=meta['link_base']
+f=r/('build/rts-worker-m32' if '--m32' in sys.argv else 'build/rts-worker-m3');meta=json.loads((f/'RtsM2Image.json').read_text());base=meta['link_base']
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX','C:/msys64/opt/wonderful/toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-')
 syms={p[2]:int(p[0],16) for line in subprocess.check_output([prefix+'nm',str(f/'worker.elf')],text=True).splitlines() if len(p:=line.split())==3}
 for status,expected in [(None,8008),(1,8021),(2,8022)]:

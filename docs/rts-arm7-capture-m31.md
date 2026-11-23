@@ -79,7 +79,11 @@ ARM7 context. As with M2.6, S9 holds both CPUs; B is for S8 only.
   when the copied frame disagrees. CRC detects errors; it is not authentication.
 
 These are model tests, not Nintendo hardware, physical cache-coherence, sound
-or graphics restoration tests. M3.1 requires its own hardware capture round.
+or graphics restoration tests. M3.1 hardware capture now passed on the target: phase 2, sequence 1,
+CRC AC5B6BD9, 921 write frames (about 15.35 s), ARM7 IRQ mode,
+parked SP 0380FF34, captured frame matching private WRAM. User observed normal
+return. The raw snapshot is retained privately outside source/artifacts.
+This validates the capture round, not state restoration.
 It deliberately has no load hotkey and never overwrites game RAM from a file.
 Missing state still includes ARM9 banked/CP15 details, VRAM/palettes/OAM,
 display/3D state, sound and IRQ/timer/IPC/device state, plus a complete-file

@@ -7,7 +7,7 @@ from ndspy import codeCompression
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn.arm_const import *
 full='--full' in sys.argv
-root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);M3='--m3' in sys.argv;elf=root/('build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
+root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);M32='--m32' in sys.argv;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
 # This optional integration test uses a separately supplied, exact A2GJ image.
 # No ROM data or extracted game code is written into the repository.
 assert hashlib.sha256(rompath.read_bytes()).hexdigest()=='85e0e265a9d855a5d156a09794571b93fb13eab616814d5df49e9fcec01277fb', 'Unexpected test ROM'
@@ -74,8 +74,8 @@ hooks=struct.unpack('<I',u.mem_read(symbols['_ZL10sWaitHooks'],4))[0]
 report={'wfi_instruction':hex(wfi),'wfi_hooked':wfi!=0xee070f90,'total_wait_hooks':hooks,'allocations':state['allocations'],'requests':state['requests']}
 assert report['wfi_hooked'] and hooks==5,report
 u.mem_write(rom.arm7RamAddress,bytes(rom.arm7))
-sectors=(0x424400 if M3 else 0x40c200)//512
-words=[0x31435452 if M3 else 0x324d5452,0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,0x4a473241,0,sectors,0x1000]+[0]*62
+sectors=(0x4c9600 if M32 else 0x424400 if M3 else 0x40c200)//512
+words=[0x32565452 if M32 else 0x31435452 if M3 else 0x324d5452,0x30002 if M32 else 0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,0x4a473241,0,sectors,0x1000]+[0]*62
 words[7]=0x80000000 if full else 0
 u.mem_write(symbols['gRtsSnapshotInfo'],struct.pack('<72I',*words))
 def prompt(uc,addr,size,data):
@@ -85,7 +85,7 @@ u.hook_add(UC_HOOK_CODE,prompt,begin=symbols['rtsProbeMessage'],end=symbols['rts
 arm7apply=next(v for k,v in symbols.items() if k.startswith('_ZNK11Arm7Patcher12ApplyPatches'))
 call(arm7apply,[0x07800100,platform,0,0x07800120,0x07800124,0])
 instruction,hook=struct.unpack('<II',u.mem_read(rom.arm7RamAddress+0x3c5c,8))
-folder=root/('build/rts-worker-m3' if M3 else 'build/rts-worker')
+folder=root/('build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
 meta=json.loads((folder/'RtsM2Image.json').read_text())
 worker_literal=struct.unpack('<I',u.mem_read(symbols['_ZL16sM2EntryAtTarget'],4))[0]
 worker=struct.unpack('<I',u.mem_read(worker_literal,4))[0]
@@ -96,7 +96,7 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and ('capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
+assert state['warnings'] and ('capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
