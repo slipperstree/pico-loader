@@ -1,8 +1,9 @@
 # M2: DSPico diagnostic memory capture
 
 This is an altered research build based on Pico Loader. M1's initial hardware
-test passed on the user's 414/MSET 3DS and A2GJ ROM on 2026-11-23. **M2 hardware
-validation is pending.** This stage captures memory; it does not implement game
+test passed on the user's 414/MSET 3DS and A2GJ ROM on 2026-11-23. **M2.4 full capture and M2.6 fast capture have now passed hardware
+return-to-game and desktop payload CRC checks.** M2.6 sequence 3 recorded
+655 write frames (about 10.92 seconds), CRC `8E0B6AC9`. This stage captures memory; it does not implement game
 state loading, and its files must not be presented as usable save states.
 
 The requested hotkey is now **L + R + Down + A** (`0x381`). The old Select
@@ -11,7 +12,8 @@ combination no longer triggers. The included M1 fallback uses the same new key.
 
 The first M2 hardware attempt froze before any capture write completed. M2.1
 fixes an SDK MPU entry defect and adds visible progress; see
-[rts-m2-entry-fix.md](rts-m2-entry-fix.md). M2.1 hardware validation is pending.
+[rts-m2-entry-fix.md](rts-m2-entry-fix.md). The initial M2.1 hardware failure is historical; current M2.6 behavior is
+documented in [rts-m2-timeouts.md](rts-m2-timeouts.md).
 
 ## Capture path
 
@@ -25,25 +27,28 @@ fixes an SDK MPU entry defect and adds visible progress; see
 - The ARM9 worker is compiled as a self-contained ARM image. The packer rejects
   external calls and unexpected relocations; only validated internal ABS32
   locations are rebased. The generated image/header lives in `build/rts-worker`.
-- The M2.1 runtime needs an 8 KiB main-RAM workspace in this build. It is reserved
+- The current M2.6 runtime reserves 8,704 bytes of main RAM. It is reserved
   through ARM7's arena, aligned to 512 bytes, and bounded below `0x023FF000`.
   On the exact ROM, the existing main arena literal is `0x027F9C08`; after the
   existing 512-byte save buffer, this maps to a workspace at `0x023FA000`.
 - A separate 1 KiB worker stack keeps the game's DTCM stable during capture.
   Main RAM is streamed sector by sector; the worker's reserved region is stored
   as zeroes and explicitly described in the header.
-- ARM7 rejects active DMA/sound capture. ARM9 rejects active DMA, card ownership
-  on ARM7, busy card/SPI, and unsupported TCM layouts. Both game CPUs remain in
-  the existing rendezvous while the ARM9 worker uses the card it already owns.
+- ARM7 rejects active DMA/sound capture. ARM9 rejects active DMA, busy card/SPI, and unsupported TCM layouts.
+  Whole ARM7 SD transactions and owning-side card/SPI are checked before parking.
+  ARM9 temporarily borrows Slot-1 after both CPUs park and restores ownership
+  before returning to the game.
 - ARM9 records the M1 frame/register capsule, CP15 configuration, 4 MiB main
   RAM, 16 KiB DTCM and 32 KiB ITCM. It cleans the D-cache using the existing
-  ARM946 cache-maintenance sequence and temporarily disables MPU/D-cache while
-  capturing, retaining the TCMs and I-cache. The original control returns on exit.
+  ARM946 cache-maintenance sequence and keeps the MPU/I-cache available while disabling D-cache and write buffering
+  during capture. Original control and attribute settings return on success.
 - Phase 1 invalidates completion before payload writes. The worker writes the
-  payload, reads it all back and checks CRC32. Only then does phase 2 commit a
-  complete header, itself read back and compared before returning to the game.
+  payload and stores its CRC32. Full mode reads it back and compares CRCs; fast
+  mode skips that pass and explicitly records flags=3, verifyCrc=0. Phase 2
+  commits the header, which is read back exactly before returning to the game.
 - A/9 IPCSYNC heartbeats keep ARM7 parked beyond M1's old three-second duration;
-  D marks completion. SD polling has finite retry budgets. Transport/CRC errors
+  D marks completion. Sector I/O has a 180-physical-frame deadline, with a finite stopped-clock
+  fallback and continued heartbeats while waiting. Transport/CRC errors
   signal E and fail closed with white screens: the user must reboot rather than
   resume save callbacks while cartridge state might be unknown. Loss of the
   worker heartbeat also holds ARM7. A precheck rejection resumes without SD I/O.
@@ -55,7 +60,7 @@ state and hidden/write-only hardware state are not serialized. The register
 capsule describes the rendezvous trampoline, not a generic exception frame.
 DMA and sound capture are rejected rather than frozen/restored. Timers, sound
 playback and scanout continue, and may glitch while game callbacks are parked.
-No memory is restored to the game. Flags=1 declares the file diagnostic-only.
+No memory is restored to the game. Flags=1 (full) or flags=3 (fast) declare the file diagnostic-only.
 
 ## Build and tests
 
