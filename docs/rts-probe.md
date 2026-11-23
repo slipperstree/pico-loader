@@ -88,9 +88,13 @@ only as writable memory; hardware display correctness remains to be tested.
 Test requirements: `unicorn==2.1.4`, host C++23 compiler, ARM binutils. The ROM is
 not distributed. Run the scripts from the source checkout after building.
 
-**Real hardware has not yet been tested.** Boot compatibility, usable idle
-IPCSYNC, available post-patch space, audio recovery and repeated pause stability
-must be established on the user's console before progressing.
+**First hardware round passed (2026-11-23, user report).** On the user's
+current 414/MSET 3DS with DSPico and the specified AA2 ROM, the user reported:
+“测试了，和你预想的一模一样，没问题。” (Tested; behavior matched the
+expectation, with no problems observed.) This confirms the expected M1
+pause/continue path for that setup. Trial count, exact duration, CPU state and
+long-session stability were not instrumented or independently measured. Other
+ROMs/consoles and actual save-state restoration remain unvalidated.
 
 ## Further work after hardware rendezvous passes
 
