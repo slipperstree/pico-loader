@@ -4,7 +4,7 @@ ENTRY(rtsM2Entry)
 SECTIONS {
  . = 0x02200000;
  __image_start = .;
- .text : { KEEP(*(.text.entry)) *(.text*) }
+ .text : { KEEP(*(.text.entry)) KEEP(*(.text.arm7capture)) *(.text*) }
  .rodata : { *(.rodata*) }
  .data : { *(.data*) }
  . = ALIGN(4);

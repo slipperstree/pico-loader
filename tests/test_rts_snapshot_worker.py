@@ -6,11 +6,12 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent/'rts/pydeps'))
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
-args=[a for a in sys.argv[1:] if a not in ('--zero-ready-only','--restore-failure-only','--fast-only')]
+args=[a for a in sys.argv[1:] if a not in ('--zero-ready-only','--restore-failure-only','--fast-only','--m3')]
 root=Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain=os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
-folder=root/'build/rts-worker'
+M3='--m3' in sys.argv
+folder=root/('build/rts-worker-m3' if M3 else 'build/rts-worker')
 meta=json.loads((folder/'RtsM2Image.json').read_text())
 original=(folder/'worker.bin').read_bytes()
 symbols={}
@@ -21,7 +22,8 @@ coprocessor=[]
 for line in subprocess.check_output([prefix+'objdump','-d',str(folder/'worker.elf')],text=True).splitlines():
     if re.search(r'\b(mrc|mcr)\b',line):coprocessor.append(int(line.split(':')[0].strip(),16)-meta['link_base'])
 MAGIC,VERSION,GAME=0x324d5452,0x20001,0x4a473241
-PAYLOAD=0x40c000
+if M3:MAGIC,VERSION=0x31435452,0x30001
+PAYLOAD=0x424200 if M3 else 0x40c000
 SECTORS=1+PAYLOAD//512
 REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
       UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,
@@ -48,7 +50,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         struct.pack_into('<I',image,offset,value+base-meta['link_base'])
     workbytes=meta['memory_bytes']
     stack_start=base+symbols['gRtsM2Stack']-meta['link_base']
-    assert workbytes<=0x2400,workbytes # Explicit 9 KiB ceiling for mode/cache/timing additions
+    assert workbytes<=(0x3000 if M3 else 0x2400),workbytes # Explicit 9 KiB ceiling for mode/cache/timing additions
     u.mem_write(base,b'\0'*workbytes);u.mem_write(base,bytes(image))
     words=[MAGIC,VERSION,SECTORS,len(EXTENTS),0x800,0x10000,GAME,arm7_reason]
     for count,first in EXTENTS:words.extend((count,first))
@@ -57,6 +59,20 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     cfg=base+meta['config_offset']
     u.mem_write(cfg,struct.pack('<72I',*words)+struct.pack('<II',base,workbytes))
     u.mem_write(cfg+296+76,struct.pack('<I',3 if fast else 1))
+    arm7=None
+    if M3:
+        from arm7_capture_model import Arm7CaptureModel
+        arm7=Arm7CaptureModel(original,meta,base=base)
+        mailbox=base+meta['mailbox_offset']
+        u.mem_write(mailbox,bytes(arm7.u.mem_read(mailbox,1056)))
+        def arm7_mailbox(uc,access,addr,size,value,data):
+            command,request,completed,status,block=struct.unpack('<5I',uc.mem_read(mailbox,20))
+            if command==1 and request!=completed:
+                status,result=arm7.block(block,request)
+                uc.mem_write(mailbox+32,result)
+                uc.mem_write(mailbox+12,struct.pack('<I',status))
+                uc.mem_write(mailbox+8,struct.pack('<I',request))
+        u.hook_add(UC_HOOK_MEM_READ,arm7_mailbox,begin=mailbox+8,end=mailbox+11)
     prepared=bytearray(512)
     struct.pack_into('<4I',prepared,0,MAGIC,VERSION,PAYLOAD+512,GAME)
     struct.pack_into('<I',prepared,20,PAYLOAD)
@@ -248,13 +264,18 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         else:assert header[6]==zlib.crc32(blob[512:])
         if fast:
             assert header[17]==0 and not any(stage==6 for stage,_ in state['stages'])
-            assert state['commands']<17000, 'Fast mode performed full payload readback'
+            assert state['commands']<(17500 if M3 else 17000), 'Fast mode performed full payload readback'
             assert header[44]==0
         else:assert header[17]==header[6] and header[44]>0
         assert header[42]==0x31544650 and header[43]>0 and header[45]>=header[43]
         assert cp[(2,0,1)]==0x42 and cp[(3,0,0)]==2
         if not corrupt_write:assert blob[512:512+0x400000]==expected
-        assert blob[-0x8000:]==itcm
+        assert blob[512+0x404000:512+0x40c000]==itcm
+        if M3:
+            assert blob[512+0x40c000:512+0x40c200]==arm7.context
+            assert blob[512+0x40c200:512+0x41c200]==arm7.beforePrivate
+            assert blob[-0x8000:]==arm7.shared
+            assert header[46:50]==(0x31433741,0x40c000,512,0x18000)
         assert header[20:24]==tuple(frame[6:10])
         assert header[24:32]==tuple(original_regs[4:12])
         assert header[33]==sp+48 and header[36]==frame[4] and header[38]==0x023e0021
@@ -269,6 +290,19 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert struct.unpack('<H',u.mem_read(0x0400006c,2))[0]==0x8008
         (folder/('model-snapshot-fast-corrupt.bin' if corrupt_write else 'model-snapshot-fast.bin' if fast else 'model-snapshot.bin')).write_bytes(blob)
     print('PASS',label,'commands',state['commands'],'file-sector writes',len(state['writes']),flush=True)
+
+if M3 and '--fast-only' in sys.argv:
+    run_case('M3 final candidate fast capture with actual ARM7 helper',owner7=True,fast=True)
+    raise SystemExit(0)
+
+if M3:
+    run_case('M3 actual ARM7 context and private/shared WRAM in full CRC snapshot',owner7=True)
+    run_case('M3 fast snapshot uses actual ARM7 helper and retains CRC',owner7=True,fast=True)
+    run_case('M3 alternate relocation',base=0x023e0000,owner7=True,fast=True)
+    run_case('M3 unsupported ARM7 mapping refuses before any SD I/O',arm7_reason=8192)
+    run_case('M3 invalid physical file map refuses all SD commands',badmap=True)
+    run_case('M3 foreign file is never overwritten',foreign=True)
+    raise SystemExit(0)
 
 if '--fast-only' in sys.argv:
     run_case('fast capture retains CRC but skips full readback',owner7=True,fast=True)

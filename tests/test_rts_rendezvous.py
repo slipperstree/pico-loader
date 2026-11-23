@@ -8,12 +8,14 @@ sys.path.insert(0, str(Path(__file__).parent / 'pydeps'))
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
 
-args = [arg for arg in sys.argv[1:] if arg != '--m2']
+args = [arg for arg in sys.argv[1:] if arg not in ('--m2','--m3')]
 root = Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain = os.environ.get('WONDERFUL_TOOLCHAIN', 'C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix = os.environ.get('ARM_NONE_EABI_PREFIX', str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
-M2 = '--m2' in sys.argv
-elf = root/('build/picoLoader9_DSPICO_snapshot_m2.elf' if M2 else 'build/picoLoader9_DSPICO_rts_probe.elf')
+M3 = '--m3' in sys.argv
+M2 = '--m2' in sys.argv or M3
+WORKER_TICKS=2400 if M3 else 600
+elf = root/('build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf' if M2 else 'build/picoLoader9_DSPICO_rts_probe.elf')
 syms = {}
 for line in subprocess.check_output([prefix+'nm', str(elf)], text=True).splitlines():
     p = line.split()
@@ -61,6 +63,24 @@ if M2:
     patch('arm7','rts7_write_busy_address',DIAGNOSTIC+8)
     patch('arm7','rts7_clock_address',DIAGNOSTIC+12)
 
+if M3:
+    import json
+    folder=root/'build/rts-worker-m3'
+    meta=json.loads((folder/'RtsM2Image.json').read_text())
+    image=bytearray((folder/'worker.bin').read_bytes())
+    for offset in meta['relocations']:
+        value=struct.unpack_from('<I',image,offset)[0]
+        struct.pack_into('<I',image,offset,value+WORKER-meta['link_base'])
+    MAILBOX=WORKER+meta['mailbox_offset']
+    DIAGNOSTIC=WORKER+meta['config_offset']+28
+    patch('arm7','rts7_diagnostic_address',DIAGNOSTIC)
+    patch('arm7','rts7_read_busy_address',DIAGNOSTIC+4)
+    patch('arm7','rts7_write_busy_address',DIAGNOSTIC+8)
+    patch('arm7','rts7_clock_address',WORKER+meta['clock_offset'])
+    for symbol,offset in [('rts7_mailbox_address','mailbox_offset'),('rts7_capture_address','arm7_capture_offset'),('rts7_service_address','arm7_service_offset')]:
+        patch('arm7',symbol,WORKER+meta[offset])
+
+CLOCK=WORKER+meta['clock_offset'] if M3 else DIAGNOSTIC+12
 REGS = [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
         UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,
         UC_ARM_REG_R10,UC_ARM_REG_R11,UC_ARM_REG_R12]
@@ -89,11 +109,13 @@ class CPU:
         self.u = Uc(UC_ARCH_ARM, UC_MODE_ARM)
         self.u.mem_map(0x02000000,0x400000)
         self.u.mem_map(0x03800000,0x10000)
+        self.u.mem_map(0x03000000,0x8000)
         self.u.mem_map(0x027c0000,0x4000)
         self.u.mem_map(0x04000000,0x2000)
         for name, blob in blobs.items():
             self.u.mem_write(bases[name], bytes(blob))
-        self.u.mem_write(WORKER,b'\x1e\xff\x2f\xe1')
+        if M3 and side==1:self.u.mem_write(WORKER,bytes(image))
+        else:self.u.mem_write(WORKER,b'\x1e\xff\x2f\xe1')
         self.u.mem_write(DONE,b'\x70\x47')
         self.initial_cpsr = 0xa0000000|mode
         self.u.reg_write(UC_ARM_REG_CPSR,self.initial_cpsr)
@@ -103,6 +125,7 @@ class CPU:
         for r,v in zip(REGS,self.initial_regs): self.u.reg_write(r,v)
         self.u.reg_write(UC_ARM_REG_LR,DONE|1)
         self.write(IME,1)
+        if M3:self.write(0x04000241,3,1)
         self.write(BRIGHT,0x4003,2)
         self.write(SUBBRIGHT,0x8002,2)
         self.done=False
@@ -127,15 +150,15 @@ class CPU:
             self.fault=True;u.emu_stop();return
         if M2 and self.side==0 and addr==WORKER:
             if self.mpu_region2&1:raise PermissionError('Protected SDK ARM7 region executed before MPU guard opened')
-            assert self.bus.out[1]==12 or self.bus.worker_ticks>600
+            assert self.bus.out[1]==12 or self.bus.worker_ticks>WORKER_TICKS
             if self.bus.arm7_reason and self.bus.worker_ticks==0:
                 self.bus.refusals+=1
-                self.bus.worker_ticks=600
+                self.bus.worker_ticks=WORKER_TICKS
             self.bus.worker_ticks+=1
-            if self.bus.worker_ticks<=600:
+            if self.bus.worker_ticks<=WORKER_TICKS:
                 self.bus.out[0]=9 if self.bus.worker_ticks%2 else 10
                 u.emu_stop();return
-            if self.bus.worker_ticks==601:
+            if self.bus.worker_ticks==WORKER_TICKS+1:
                 if not self.bus.arm7_reason:assert self.bus.frames>180, self.bus.frames
                 assert self.bus.out[1]==12
                 self.bus.out[0]=13;self.bus.events.append((0,13));self.bus.snapshots+=1
@@ -272,7 +295,7 @@ c7.check();c9.check()
 assert bus.dimmed and bus.out==[0,0],bus.events
 expected=[(1,11),(0,10),(1,12)]+([(0,13)] if M2 else [])+[(1,0),(0,0)]
 assert bus.events==expected,bus.events
-if M2:assert c7.read(DIAGNOSTIC+12)==bus.frames and bus.frames>180, 'ARM7 frame clock mismatch'
+if M2:assert c7.read(CLOCK)==bus.frames and bus.frames>180, ('ARM7 frame clock mismatch',c7.read(CLOCK),bus.frames,bus.worker_ticks,bus.events[-10:])
 print('PASS two-CPU request/ACK/park/release with restored CPU state and brightness')
 for round_id in range(2):
     bus.worker_ticks=0;bus.frames=0
@@ -291,8 +314,13 @@ for round_id in range(2):
     c7.check();c9.check()
     assert bus.out==[0,0]
     assert bus.events[-len(expected):]==expected
-    if M2:assert c7.read(DIAGNOSTIC+12)==bus.frames and bus.frames>180, 'Frame clock did not reset'
+    if M2:assert c7.read(CLOCK)==bus.frames and bus.frames>180, 'Frame clock did not reset'
 print('PASS three consecutive two-CPU rendezvous cycles')
+if M3:
+    context=struct.unpack('<128I',c7.u.mem_read(MAILBOX+544,512))
+    assert context[0]==0x31433741 and context[4:6]==(1,3)
+    assert context[8:19]==tuple(c7.initial_regs[2:]) and context[19]==DONE|1
+    print('PASS integrated ARM7 hook publishes its actual parked frame and returns normally')
 
 if not M2:
     patch('dim','rts9_hold_budget',16)
@@ -314,7 +342,7 @@ for mode in (0x1f,0x12):
     c7=CPU(bus,1,mode=mode)
     for _ in range(30):call7(c7)
     bus.out[0]=10;c7.start()
-    for _ in range(10):
+    for _ in range(30):
         c7.step()
         if bus.out[1]==12:break
     assert bus.out[1]==12

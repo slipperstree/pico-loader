@@ -1,11 +1,20 @@
 #pragma once
 #include <stdint.h>
 
-// M2 is a diagnostic capture, not a restorable save-state format.
+// M2 and the opt-in M3.1 ARM7 extension are diagnostic captures, not loadable states.
 #define RTS_M2_MAGIC 0x324D5452u
 #define RTS_M2_VERSION 0x00020001u
 #define RTS_M2_GAME 0x4A473241u
 #define RTS_M2_PAYLOAD_BYTES (0x400000u + 0x4000u + 0x8000u)
+#ifdef PICO_RTS_ARM7_CAPTURE
+// M3.1 diagnostic extension; deliberately incompatible with M2, still NO load.
+#undef RTS_M2_MAGIC
+#undef RTS_M2_VERSION
+#undef RTS_M2_PAYLOAD_BYTES
+#define RTS_M2_MAGIC 0x31435452u
+#define RTS_M2_VERSION 0x00030001u
+#define RTS_M2_PAYLOAD_BYTES (0x400000u + 0x4000u + 0x8000u + 512u + 0x18000u)
+#endif
 #define RTS_M2_FILE_BYTES (512u + RTS_M2_PAYLOAD_BYTES)
 #define RTS_M2_FILE_SECTORS (RTS_M2_FILE_BYTES / 512u)
 #define RTS_M2_MAX_EXTENTS 32u
@@ -14,7 +23,11 @@
 #define RTS_M2_FLAG_DIAGNOSTIC 1u
 #define RTS_M2_FLAG_NO_READBACK 2u
 #define RTS_M2_TIMING_MAGIC 0x31544650u // PFT1: physical frame timing
+#ifdef PICO_RTS_ARM7_CAPTURE
+#define RTS_M2_FILE_PATH "/_pico/RTS-A2GJ-M3.bin"
+#else
 #define RTS_M2_FILE_PATH "/_pico/RTS-A2GJ-M2.bin"
+#endif
 typedef struct { uint32_t count, sector; } RtsM2Extent;
 typedef struct {
     uint32_t magic, version, fileSectors, extentCount;

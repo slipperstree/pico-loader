@@ -20,6 +20,9 @@
 extern RtsSnapshotInfo gRtsSnapshotInfo;
 extern "C" u32 rts9_m2_entry;
 extern "C" u32 rts7_diagnostic_address, rts7_read_busy_address, rts7_write_busy_address, rts7_clock_address;
+#ifdef PICO_RTS_ARM7_CAPTURE
+extern "C" u32 rts7_mailbox_address, rts7_capture_address, rts7_service_address;
+#endif
 static u32* sM2EntryAtTarget;
 #endif
 
@@ -200,14 +203,23 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     *(u32*)relocated(&rts7_write_busy_address,SECTION_START(patch_rts7),target)=writeBusy;
     *(u32*)relocated(&rts7_clock_address,SECTION_START(patch_rts7),target)=(u32)workspace+RTS_M2_CLOCK_OFFSET;
 #endif
+#ifdef PICO_RTS_ARM7_CAPTURE
+    *(u32*)relocated(&rts7_mailbox_address,SECTION_START(patch_rts7),target)=(u32)workspace+RTS_M3_MAILBOX_OFFSET;
+    *(u32*)relocated(&rts7_capture_address,SECTION_START(patch_rts7),target)=(u32)workspace+RTS_M3_ARM7_CAPTURE_OFFSET;
+    *(u32*)relocated(&rts7_service_address,SECTION_START(patch_rts7),target)=(u32)workspace+RTS_M3_ARM7_SERVICE_OFFSET;
+#endif
     // No target becomes active until both code blocks have been copied.
     epilogue[1] = relocated((void*)rts7_arm, SECTION_START(patch_rts7), target);
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_SNAPSHOT
+#ifdef PICO_RTS_ARM7_CAPTURE
+    rtsProbeMessage("RTS research: capture M3.1\nARM7 context + WRAM added.\nCapture only, NO load yet.\nHold L+R+Down+A.\nS8 8192: WRAM/mode guard.");
+#else
     rtsProbeMessage((header->flags&RTS_M2_FLAG_NO_READBACK)
         ? "RTS research: snapshot M2.6\nFAST: no full readback.\nCapture only, NO load yet.\nHold L+R+Down+A.\nOn S8, read code, press B."
         : "RTS research: snapshot M2.6\nFULL: write + readback.\nCapture only, NO load yet.\nHold L+R+Down+A.\nOn S8, read code, press B.");
+#endif
 #else
     rtsProbeMessage("RTS research: CPU probe M1\nNOT save/load states yet.\nHold L+R+Down+A.\nDim/pause about 3 seconds,\nthen continue automatically.");
 #endif

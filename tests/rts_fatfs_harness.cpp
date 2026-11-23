@@ -20,7 +20,7 @@ static void fragmented(unsigned interval){
     auto h=initialHeader();write(&f,&h,512);
     unsigned char zero[4096]{};unsigned block=0;
     for(unsigned n=0;n<RTS_M2_PAYLOAD_BYTES;n+=4096){
-        write(&f,zero,4096);
+        write(&f,zero,RTS_M2_PAYLOAD_BYTES-n<4096 ? RTS_M2_PAYLOAD_BYTES-n : 4096);
         if(n%interval==0){char name[64];std::snprintf(name,sizeof(name),"/_pico/B%u-%u.dat",interval,block++);FIL b;check(f_open(&b,name,FA_CREATE_ALWAYS|FA_WRITE));write(&b,zero,sizeof(zero));check(f_close(&b));}
     }
     check(f_close(&f));

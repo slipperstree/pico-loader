@@ -145,8 +145,22 @@ rts7_m2_guard_done:
     ldr r9, [r0]
     mov r3, #0
     str r3, [r0]
-    ldr r0, rts7_ipc
     bic r10, r1, #0xf00
+#ifdef PICO_RTS_ARM7_CAPTURE
+    mov r1,sp
+    mov r2,r8
+    mov r3,r9
+    ldr r0,rts7_mailbox_address
+    ldr r12,rts7_capture_address
+    mov lr,pc
+    bx r12
+    ldr r2,[r0,#12]
+    cmp r2,#0
+    movne r2,#8192
+    ldrne r0,rts7_diagnostic_address
+    strne r2,[r0]
+#endif
+    ldr r0, rts7_ipc
     orr r3, r10, #0xc00
     strh r3, [r0]
     ldr r0, rts7_vcount
@@ -163,6 +177,13 @@ rts7_m2_guard_done:
     mov r11, #10
 #endif
 rts7_frame_loop:
+#ifdef PICO_RTS_ARM7_CAPTURE
+    ldr r0,rts7_mailbox_address
+    ldr r12,rts7_service_address
+    mov lr,pc
+    bx r12
+    ldr r0,rts7_vcount
+#endif
     ldrh r3, [r0]
     cmp r3, r6
     mov r6, r3
@@ -255,5 +276,11 @@ rts7_exmem: .word 0x04000204
 rts7_spi: .word 0x040001a0
 .global rts7_clock_address
 rts7_clock_address: .word 0
+#ifdef PICO_RTS_ARM7_CAPTURE
+.global rts7_mailbox_address, rts7_capture_address, rts7_service_address
+rts7_mailbox_address: .word 0
+rts7_capture_address: .word 0
+rts7_service_address: .word 0
+#endif
 #endif
 #endif

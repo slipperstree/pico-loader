@@ -6,8 +6,9 @@ M2.6 FAST on the user's current 414/MSET 3DS/A2GJ target returned normally.
 The actual file passed desktop CRC: phase 2, sequence 3, CRC 8E0B6AC9,
 655 physical write frames (about 10.92 s at nominal 60 Hz). SHA256:
 429da936698bf9fca6ad1ca9de557a2c0ae36a671e7cd3674e6dc030ef781bcf.
-A private copy is retained outside source and public artifacts. G: remains on
-M2.6; this branch deliberately does not enable a restore hotkey yet.
+A private copy is retained outside source and public artifacts. M2.6 is kept as the known-good rollback; this branch deliberately does not
+enable a restore hotkey yet. The integrated M3.1 capture candidate is documented
+in [ARM7 capture](rts-arm7-capture-m31.md).
 
 ## Implemented first primitive
 
@@ -57,7 +58,9 @@ or save-state implementation code is copied.
 
 ## Remaining work before a real load
 
-1. Capture/restore ARM7 private 64 KiB and shared 32 KiB WRAM, its interrupted
+1. M3.1 now captures ARM7 private 64 KiB and shared 32 KiB WRAM plus a parked
+   banked context through a stackless helper; hardware validation remains.
+   Still implement restoring that memory and its interrupted
    CPU context, banked registers and IRQ return state. ARM9 cannot simply read
    private ARM7 WRAM; it needs an ARM7-side staging protocol that preserves the
    paused frame and keeps both CPUs on controlled stacks during restore.

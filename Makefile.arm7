@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: CC0-1.0
 #
-# SPDX-FileContributor: Antonio Niño Díaz, 2023
+# SPDX-FileContributor: Antonio Ni帽o D铆az, 2023
 
 export BLOCKSDS			?= /opt/blocksds/core
 export BLOCKSDSEXT		?= /opt/blocksds/external
@@ -26,6 +26,10 @@ ifeq ($(PICO_RTS_SNAPSHOT),1)
 DEFINES += -DPICO_RTS_SNAPSHOT
 endif
 
+ifeq ($(PICO_RTS_ARM7_CAPTURE),1)
+DEFINES += -DPICO_RTS_ARM7_CAPTURE
+endif
+
 # Libraries
 # ---------
 
@@ -36,7 +40,7 @@ LIBDIRS		:= $(BLOCKSDS)/libs/libnds \
 # Build artifacts
 # -----------------
 
-NAME		:= picoLoader7$(if $(filter 1,$(PICO_RTS_SNAPSHOT)),_snapshot_m2)
+NAME		:= picoLoader7$(if $(filter 1,$(PICO_RTS_SNAPSHOT)),$(if $(filter 1,$(PICO_RTS_ARM7_CAPTURE)),_capture_m3,_snapshot_m2))
 BUILDDIR	:= build/$(NAME)
 BIN     := $(NAME).bin
 ELF		:= build/$(NAME).elf

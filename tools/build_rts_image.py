@@ -33,9 +33,13 @@ def array(name,values,typ,width):
 text='#pragma once\n#include <stdint.h>\n'
 for name,value in [('LINK_BASE',base),('MEMORY_BYTES',end-base),('CONFIG_OFFSET',symbols['gRtsM2']-base),('CLOCK_OFFSET',symbols['gRtsM2Frames']-base),('ENTRY_OFFSET',symbols['rtsM2Entry']-base)]:
     text+=f'inline constexpr uint32_t RTS_M2_{name} = 0x{value:x};\n'
+for symbol,label in [('gRtsArm7Mailbox','MAILBOX'),('rtsArm7CaptureContext','ARM7_CAPTURE'),('rtsArm7CaptureService','ARM7_SERVICE')]:
+    if symbol in symbols:text+=f'inline constexpr uint32_t RTS_M3_{label}_OFFSET = 0x{symbols[symbol]-base:x};\n'
 text+=array('RTS_M2_IMAGE',list(blob),'uint8_t',2)+'\n'
 text+=array('RTS_M2_RELOCS',relocs,'uint32_t',8)+'\n'
 out.write_text(text,encoding='utf-8')
 report={'link_base':base,'memory_bytes':end-base,'file_bytes':len(blob),'config_offset':symbols['gRtsM2']-base,'clock_offset':symbols['gRtsM2Frames']-base,'entry_offset':symbols['rtsM2Entry']-base,'relocations':relocs}
+for symbol,label in [('gRtsArm7Mailbox','mailbox'),('rtsArm7CaptureContext','arm7_capture'),('rtsArm7CaptureService','arm7_service')]:
+    if symbol in symbols:report[label+'_offset']=symbols[symbol]-base
 out.with_suffix('.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
 print('M2 runtime:',len(blob),'image bytes,',end-base,'reserved bytes,',len(relocs),'checked relocations')

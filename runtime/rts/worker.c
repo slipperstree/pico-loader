@@ -1,6 +1,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "RtsSnapshotInfo.h"
+#ifdef PICO_RTS_ARM7_CAPTURE
+#include "RtsArm7Capture.h"
+volatile RtsArm7Mailbox gRtsArm7Mailbox __attribute__((aligned(32)));
+#endif
 typedef uint32_t u32;
 typedef uint16_t u16;
 typedef uint8_t u8;
@@ -77,7 +81,16 @@ static void progressOpen(void)
 static void progress(u32 stage,u32 value)
 {
     // 'M2 S5 0128/8288'. A stationary stage identifies where a fault happened.
-    u8 text[15]={'M','2',' ','S',(u8)('0'+stage),' ','0','0','0','0','/','8','2','8','8'};
+    u8 text[15]={'M',
+#ifdef PICO_RTS_ARM7_CAPTURE
+    '3'
+#else
+    '2'
+#endif
+    ,' ','S',(u8)('0'+stage),' ','0','0','0','0','/','8','2','8','8'};
+#ifdef PICO_RTS_ARM7_CAPTURE
+    text[11]='8';text[12]='4';text[13]='8';text[14]='1'; // total payload sectors
+#endif
     static const u16 place[4]={1000,100,10,1};
     for(u32 field=0;field<(stage==9 ? 2u : 1u);++field)
     {
@@ -306,6 +319,23 @@ static void showRefusal(u32 reason)
     }
 }
 
+#ifdef PICO_RTS_ARM7_CAPTURE
+__attribute__((noinline)) static const u32* arm7Block(u32 block)
+{
+    volatile RtsArm7Mailbox* m=&gRtsArm7Mailbox;
+    m->block=block;
+    u32 request=m->request+1;
+    m->request=request;
+    __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(0):"memory");
+    m->command=1;
+    __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(0):"memory");
+    beginIo(RTS_M2_FILE_SECTORS-RTS_ARM7_BLOCKS+block);
+    while(m->completed!=request)if(!ioWaitAllowed(8))fault(8);
+    m->command=0;
+    if(m->status){ioState.error=20+m->status;fault(8);}
+    return (const u32*)m->data;
+}
+#endif
 void rtsM2Run(const u32* entryRegs)
 {
     WorkerState* s=&gRtsM2;
@@ -369,6 +399,11 @@ void rtsM2Run(const u32* entryRegs)
     h->reserved[2]=oldCi;h->reserved[3]=oldBuffer;
     u32 transientCi=oldCi|2u,transientControl=(control&~4u)|0x1000u;
     __asm__ volatile("mcr p15,0,%0,c7,c5,0\n mcr p15,0,%1,c2,c0,1\n mcr p15,0,%0,c3,c0,0\n mcr p15,0,%2,c1,c0,0"::"r"(zero),"r"(transientCi),"r"(transientControl):"memory");
+#ifdef PICO_RTS_ARM7_CAPTURE
+    if(gRtsArm7Mailbox.context.magic!=RTS_ARM7_CONTEXT_MAGIC || gRtsArm7Mailbox.status){ioState.error=25;fault(8);}
+    h->reserved[8]=0x31433741; // ARM7 context marker and fixed diagnostic layout.
+    h->reserved[9]=0x40c000;h->reserved[10]=512;h->reserved[11]=0x18000;
+#endif
     h->reserved[4]=RTS_M2_TIMING_MAGIC;
     u32 started=gRtsM2Frames[0];
     u16 aux=REG16(0x040001a0);
@@ -401,7 +436,11 @@ void rtsM2Run(const u32* entryRegs)
             else src=(const u32*)address;
         }
         else if(index<(0x400000+0x4000)/512)src=(const u32*)(h->dtcmBase+(index-0x400000/512)*512);
-        else src=(const u32*)(0x01ff8000+(index-(0x400000+0x4000)/512)*512);
+        else if(index<0x40c000/512)src=(const u32*)(0x01ff8000+(index-(0x400000+0x4000)/512)*512);
+#ifdef PICO_RTS_ARM7_CAPTURE
+        else if(index==0x40c000/512)src=(const u32*)&gRtsArm7Mailbox.context;
+        else src=arm7Block(index-0x40c000/512-1);
+#endif
         value=crc(value,src,128);
         if(!writeSector(index+1,src))fault(4);
         heartbeat(index);
