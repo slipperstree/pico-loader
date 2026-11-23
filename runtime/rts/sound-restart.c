@@ -31,7 +31,7 @@ static int sampleRange(u32 a,u32 words)
 }
 int RtsBuildSoundRestart(const RtsSoundShadow* s,const u32 controls[16],u32 master,u32 bias,u32 capture,RtsSoundRestartPlan* out)
 {
-    if(!s || !controls || !out || s->magic!=RTS_SOUND_SHADOW_MAGIC || s->version!=1 || s->unsupported || master>65535 || bias>1023 || capture&0x8080)return 1;
+    if(!s || !controls || s->magic!=RTS_SOUND_SHADOW_MAGIC || s->version!=1 || s->unsupported || master>65535 || bias>1023 || capture&0x8080)return 1;
     RtsSoundRestartPlan plan;u32* p=(u32*)&plan;for(u32 i=0;i<128;++i)p[i]=0;
     plan.magic=RTS_SOUND_PLAN_MAGIC;plan.version=1;plan.master=master;plan.bias=bias;plan.sequence=s->sequence;
     for(u32 ch=0;ch<16;++ch)
@@ -47,7 +47,7 @@ int RtsBuildSoundRestart(const RtsSoundShadow* s,const u32 controls[16],u32 mast
         RtsSoundChannel* d=&plan.channels[ch];
         d->control=control;d->source=c->source;d->timer=c->timer;d->loop=c->loop;d->length=c->length;
     }
-    u32* dst=(u32*)out;for(u32 i=0;i<128;++i)dst[i]=p[i];return 0;
+    if(out){u32* dst=(u32*)out;for(u32 i=0;i<128;++i)dst[i]=p[i];}return 0;
 }
 void RtsPrepareSoundRestart(const RtsSoundRestartPlan* p,RtsSoundWrite write,void* user)
 {

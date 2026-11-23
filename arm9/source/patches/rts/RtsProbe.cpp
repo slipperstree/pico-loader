@@ -24,6 +24,21 @@ extern "C" u32 rts7_diagnostic_address, rts7_read_busy_address, rts7_write_busy_
 extern "C" u32 rts7_mailbox_address, rts7_capture_address, rts7_service_address;
 #endif
 static u32* sM2EntryAtTarget;
+#ifdef PICO_RTS_RESTORE_PROBE
+#include "RtsP4.h"
+#include "RtsP4Profile.h"
+extern RtsP4Identity gRtsP4LoaderIdentity;
+extern "C" u32 rts7_operation_address,rts7_begin_address,rts7_loop_address;
+DEFINE_SECTION_SYMBOLS(patch_rtsSoundPcm);
+DEFINE_SECTION_SYMBOLS(patch_rtsSoundTimer);
+DEFINE_SECTION_SYMBOLS(patch_rtsSoundExit);
+extern "C" {
+void rtsSoundPcmHook(),rtsSoundTimerHook(),rtsSoundExitHook();
+extern u32 rtsSoundPcmBusy,rtsSoundPcmObserve,rtsSoundPcmResume;
+extern u32 rtsSoundTimerBusy,rtsSoundTimerObserve,rtsSoundTimerResume,rtsSoundExitBusy;
+}
+static u8* sP4Tail;
+#endif
 #endif
 
 DEFINE_SECTION_SYMBOLS(patch_rts9_gate);
@@ -60,6 +75,9 @@ void InstallRtsProbeArm9(PatchContext& context, const nds_header_ntr_t* header, 
     sEnabledAtTarget = nullptr;
 #ifdef PICO_RTS_SNAPSHOT
     sM2EntryAtTarget = nullptr;
+#ifdef PICO_RTS_RESTORE_PROBE
+    sP4Tail=nullptr;
+#endif
 #endif
     sWaitHooks = 0;
     // First hardware target only: the user's AA2 Japanese/CJK ROM (A2GJ).
@@ -145,6 +163,11 @@ void InstallRtsProbeArm9(PatchContext& context, const nds_header_ntr_t* header, 
 #ifdef PICO_RTS_SNAPSHOT
     sM2EntryAtTarget=(u32*)relocated(&rts9_m2_entry,originals[3],targets[3]);
 #endif
+#ifdef PICO_RTS_RESTORE_PROBE
+    if(sWaitHooks!=5)return;
+    sP4Tail=reserve(heap,RTS_P4_TAIL_BYTES);
+    if(!sP4Tail)return;
+#endif
     if (sWaitHooks)
         sEnabledAtTarget = (u32*)relocated(&rts9_enabled, originals[0], targets[0]);
 }
@@ -158,7 +181,11 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
 #ifdef PICO_RTS_SNAPSHOT
     if (!workspace || workspaceBytes<RTS_M2_MEMORY_BYTES || gRtsSnapshotInfo.magic!=RTS_M2_MAGIC || !sM2EntryAtTarget)
     {
+#ifdef PICO_RTS_RESTORE_PROBE
+        rtsProbeMessage("P4 checkpoint unavailable.\nCheck ROM and .rts file,\nfree TF space/fragmentation.");
+#else
         rtsProbeMessage("M2 snapshot unavailable.\nCheck free TF space and\nRTS-A2GJ-M2.bin format.\nNo memory capture active.");
+#endif
         return;
     }
     u32 readBusy=DSPicoReadSdSectorsPatchCode::busyAddress;
@@ -167,6 +194,10 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     {
         rtsProbeMessage("M2 disabled: SD guards\nwere not installed.");return;
     }
+#ifdef PICO_RTS_RESTORE_PROBE
+    if(!sP4Tail || memcmp(gRtsP4LoaderIdentity.code,RTS_P4_EXPECTED_CODE,32))
+    {rtsProbeMessage("P4 disabled: code identity\nor secure tail unavailable.");return;}
+#endif
     memset(workspace,0,workspaceBytes);
     memcpy(workspace,RTS_M2_IMAGE,sizeof(RTS_M2_IMAGE));
     u32 delta=(u32)workspace-RTS_M2_LINK_BASE;
@@ -175,10 +206,25 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     memcpy(config,&gRtsSnapshotInfo,sizeof(gRtsSnapshotInfo));
     ((RtsSnapshotInfo*)config)->reserved=0;
     auto header=(RtsM2Header*)(config+sizeof(gRtsSnapshotInfo)+8);
-    header->flags=RTS_M2_FLAG_DIAGNOSTIC | ((gRtsSnapshotInfo.reserved&RTS_M2_CONFIG_FULL_VERIFY) ? 0 : RTS_M2_FLAG_NO_READBACK);
+    header->flags=
+#ifdef PICO_RTS_RESTORE_PROBE
+        RTS_P4_EXPERIMENT_FLAG |
+#else
+        RTS_M2_FLAG_DIAGNOSTIC |
+#endif
+        ((gRtsSnapshotInfo.reserved&RTS_M2_CONFIG_FULL_VERIFY) ? 0 : RTS_M2_FLAG_NO_READBACK);
     ((u32*)(config+sizeof(gRtsSnapshotInfo)))[0]=(u32)workspace;
     ((u32*)(config+sizeof(gRtsSnapshotInfo)))[1]=workspaceBytes;
     *sM2EntryAtTarget=(u32)workspace+RTS_M2_ENTRY_OFFSET;
+#ifdef PICO_RTS_RESTORE_PROBE
+    auto ptr=(const u32*)((u8*)workspace+RTS_P4_POINTERS_OFFSET);
+    memcpy(sP4Tail,(void*)ptr[8],RTS_P4_TAIL_BYTES);
+    *(u32*)ptr[9]=(u32)sP4Tail;
+    auto identity=(RtsP4Identity*)ptr[7];
+    memcpy(identity,&gRtsP4LoaderIdentity,sizeof(*identity));
+    memcpy(identity->build,RTS_P4_BUILD_SHA256,32);
+    auto shadow=(RtsSoundShadow*)ptr[5];shadow->magic=RTS_SOUND_SHADOW_MAGIC;shadow->version=1;
+#endif
 #else
     (void)workspace; (void)workspaceBytes;
 #endif
@@ -208,14 +254,45 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     *(u32*)relocated(&rts7_capture_address,SECTION_START(patch_rts7),target)=(u32)workspace+RTS_M3_ARM7_CAPTURE_OFFSET;
     *(u32*)relocated(&rts7_service_address,SECTION_START(patch_rts7),target)=(u32)workspace+RTS_M3_ARM7_SERVICE_OFFSET;
 #endif
-    // No target becomes active until both code blocks have been copied.
+#ifdef PICO_RTS_RESTORE_PROBE
+    // Exact-code identity above gates these known SDK runtime continuations.
+    const u32 pcmPattern[]={0xe1a07002,0xe1a06003,0xe59d1020,0xe59d502c};
+    const u32 timerPattern[]={0xe2611801,0xe1a00200,0xe2800301,0xe2800b01};
+    auto pcm=context.FindPattern32(pcmPattern,sizeof(pcmPattern));
+    if(pcm)pcm-=2;
+    auto timer=context.FindPattern32(timerPattern,sizeof(timerPattern));
+    if(!pcm || !timer || pcm[0xb8/4]!=0xe12fff1e || timer[0x14/4]!=0xe12fff1e)
+    {rtsProbeMessage("P4 disabled: sound SDK\nentry not recognized.");return;}
+    void* soundOriginal[]={SECTION_START(patch_rtsSoundPcm),SECTION_START(patch_rtsSoundTimer),SECTION_START(patch_rtsSoundExit)};
+    const u32 soundSize[]={SECTION_SIZE(patch_rtsSoundPcm),SECTION_SIZE(patch_rtsSoundTimer),SECTION_SIZE(patch_rtsSoundExit)};
+    u8* soundTarget[3];
+    for(u32 i=0;i<3;++i){soundTarget[i]=reserve(context.GetPatchHeap(),soundSize[i]);if(!soundTarget[i]){rtsProbeMessage("P4 disabled: sound patch\nspace unavailable.");return;}memcpy(soundTarget[i],soundOriginal[i],soundSize[i]);}
+    auto soundLink=[&](u32& literal,u32 i,u32 value){*(u32*)relocated(&literal,soundOriginal[i],soundTarget[i])=value;};
+    soundLink(rtsSoundPcmBusy,0,ptr[4]);soundLink(rtsSoundPcmObserve,0,ptr[2]);soundLink(rtsSoundPcmResume,0,0x037ff2a0);
+    soundLink(rtsSoundTimerBusy,1,ptr[4]);soundLink(rtsSoundTimerObserve,1,ptr[3]);soundLink(rtsSoundTimerResume,1,0x037ff070);
+    soundLink(rtsSoundExitBusy,2,ptr[4]);
+    const u32 exit=relocated((void*)rtsSoundExitHook,soundOriginal[2],soundTarget[2]);
+    pcm[0]=timer[0]=0xe51ff004;
+    pcm[1]=relocated((void*)rtsSoundPcmHook,soundOriginal[0],soundTarget[0]);
+    timer[1]=relocated((void*)rtsSoundTimerHook,soundOriginal[1],soundTarget[1]);
+    pcm[0xb8/4]=0xea000000|(((exit-0x037ff350-8)>>2)&0xffffff);
+    timer[0x14/4]=0xea000000|(((exit-0x037ff07c-8)>>2)&0xffffff);
+    *(u32*)relocated(&rts7_operation_address,SECTION_START(patch_rts7),target)=ptr[6]+offsetof(RtsP4Shared,operation);
+    *(u32*)relocated(&rts7_begin_address,SECTION_START(patch_rts7),target)=ptr[1];
+    *(u32*)relocated(&rts7_loop_address,SECTION_START(patch_rts7),target)=ptr[0];
+#endif
+    // No target becomes active until all mandatory blocks have been copied.
     epilogue[1] = relocated((void*)rts7_arm, SECTION_START(patch_rts7), target);
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_SNAPSHOT
 #ifdef PICO_RTS_ARM7_CAPTURE
 #ifdef PICO_RTS_VIDEO_CAPTURE
+#ifdef PICO_RTS_RESTORE_PROBE
+    rtsProbeMessage("RTS research: restore P4.0\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nAudio restarts. 3D incomplete.");
+#else
     rtsProbeMessage("RTS research: capture M3.2\nARM7 + VRAM/palette/OAM.\nCapture only, NO load yet.\nHold L+R+Down+A.");
+#endif
 #else
     rtsProbeMessage("RTS research: capture M3.1\nARM7 context + WRAM added.\nCapture only, NO load yet.\nHold L+R+Down+A.\nS8 8192: WRAM/mode guard.");
 #endif

@@ -1,20 +1,21 @@
-"""Read-only checker for M2/M3 diagnostic captures. Never restores console memory."""
+"""Read-only checker for M2/M3 captures and P4 experimental checkpoints. Never restores console memory."""
 import json,struct,sys,zlib
 from pathlib import Path
 
 def check(path):
     data=Path(path).read_bytes()
-    if len(data) not in (0x40c200,0x424400,0x4c9600):raise ValueError(f'文件大小不符：{len(data)}')
+    if len(data) not in (0x40c200,0x424400,0x4c9600,0x4c9800):raise ValueError(f'文件大小不符：{len(data)}')
     h=struct.unpack_from('<128I',data)
-    m32=h[0]==0x32565452
-    m3=h[0] in (0x31435452,0x32565452)
-    expected=(0x32565452,0x30002,0x4c9600,0x4a473241) if m32 else (0x31435452,0x30001,0x424400,0x4a473241) if m3 else (0x324d5452,0x20001,0x40c200,0x4a473241)
+    p4=h[0]==0x30505452
+    m32=h[0] in (0x32565452,0x30505452)
+    m3=h[0] in (0x31435452,0x32565452,0x30505452)
+    expected=(0x30505452,0x40001,0x4c9800,0x4a473241) if p4 else (0x32565452,0x30002,0x4c9600,0x4a473241) if m32 else (0x31435452,0x30001,0x424400,0x4a473241) if m3 else (0x324d5452,0x20001,0x40c200,0x4a473241)
     if h[:4]!=expected or len(data)!=expected[2] or h[5]!=len(data)-512:
         raise ValueError('文件标识或版本不符')
     if h[4]!=2:raise ValueError('尚未完成快照写入' if h[4]==0 else f'快照未完成或校验未通过（阶段 {h[4]}）')
     if h[18]:raise ValueError('快照记录了错误，不能作为成功捕获')
     value=zlib.crc32(data[512:])
-    if h[19] not in (1,3):raise ValueError('快照诊断标记不符')
+    if h[19] not in ((4,6) if p4 else (1,3)):raise ValueError('快照诊断标记不符')
     fast=bool(h[19]&2)
     if value!=h[6] or (not fast and value!=h[17]):raise ValueError('快照载荷 CRC32 不符')
     if fast and h[17]!=0:raise ValueError('快速模式不得伪造完整读回 CRC')
@@ -53,6 +54,20 @@ def check(path):
                          'brightness':[f'{x:04X}' for x in v[7:9]],'vram_controls':[f'{x:02X}' for x in v[9:18]],
                          'write_only_and_hidden_state_captured':False}
         result['status']='M3.2 video-memory diagnostic capture only; game-state load is not implemented'
+    if p4:
+        header=bytearray(data[:512]);struct.pack_into('<I',header,480,0)
+        if zlib.crc32(header)!=h[120]:raise ValueError('P4 文件头 CRC32 不符')
+        if h[53]!=0x30505452 or h[54:56]!=(0x31503941,1):raise ValueError('P4 ARM9 CPU 记录不符')
+        sound=struct.unpack_from('<128I',data,512+0x4c9400)
+        if sound[:2]!=(0x31485341,1) or sound[3]:raise ValueError('P4 声音记录不符')
+        if v[92]>16 or v[93]>16:raise ValueError('P4 FIFO 队列长度不符')
+        result['format']='P4.0 experimental persistent checkpoint'
+        result['code_fingerprint_sha256']=data[400:432].hex()
+        result['build_fingerprint']=data[432:464].hex()
+        result['header_crc32']=f'{h[120]:08X}'
+        result['status']='File checks passed; runtime must additionally validate ROM/build/layout before experimental restore'
+        result['internal_3d_restored']=False
+        result['audio']='restart from recorded sample parameters'
     if h[42]==0x31544650:
         result['timing_frames']={'write':h[43],'readback':h[44],'through_payload':h[45]}
         result['timing_seconds_approx_60hz']={k:round(v/60,2) for k,v in result['timing_frames'].items()}

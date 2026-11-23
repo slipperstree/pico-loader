@@ -33,6 +33,15 @@
 #include "RtsSnapshotPrepare.h"
 #include <span>
 static RtsSnapshotInfo sRtsSnapshotInfo;
+#ifdef PICO_RTS_RESTORE_PROBE
+#include "RtsSha256.h"
+#include "RtsSavePath.h"
+#include "RtsP4Profile.h"
+static RtsSha256 sP4CodeHash;
+static bool sP4HashEnabled;
+static uint8_t sP4Code[32];
+
+#endif
 #endif
 
 #define AP_LIST_PATH      "/_pico/aplist.bin"
@@ -202,7 +211,28 @@ void NdsLoader::Load(BootMode bootMode)
     memset(&sRtsSnapshotInfo,0,sizeof(sRtsSnapshotInfo));
     if (!isHomebrew && !_runInDSiMode && _romHeader.gameCode==RTS_M2_GAME &&
         bootMode!=BootMode::Multiboot && gLoaderHeader.bootDrive==PLOAD_BOOT_DRIVE_DLDI)
+    {
+#ifdef PICO_RTS_RESTORE_PROBE
+        if(_romPath)
+        {
+            size_t capacity=strlen(_romPath)+5;auto path=std::make_unique<char[]>(capacity);
+            if(RtsMakeSavePath(_romPath,path.get(),capacity))PrepareRtsSnapshotFile(sRtsSnapshotInfo,path.get());
+        }
+#else
         PrepareRtsSnapshotFile(sRtsSnapshotInfo);
+#endif
+    }
+#endif
+#ifdef PICO_RTS_RESTORE_PROBE
+    sP4HashEnabled=sRtsSnapshotInfo.magic==RTS_M2_MAGIC;
+    if(sP4HashEnabled)
+    {
+        // Hash the exact loaded program/header, not every ROM asset at boot.
+        // The private first-target full ROM is verified on the host before tests.
+        RtsSha256Init(&sP4CodeHash);RtsSha256Update(&sP4CodeHash,"P4A2GJ\0\0",8);
+        u32 bytes=(u32)f_size(&_romFile);RtsSha256Update(&sP4CodeHash,&bytes,4);
+        RtsSha256Update(&sP4CodeHash,&_romHeader,0x170);
+    }
 #endif
     sendToArm9(IPC_COMMAND_ARM9_SET_ROM_FILE_INFO);
     sendToArm9(isHomebrew ? 0 : _romFile.dir_sect);
@@ -580,6 +610,10 @@ void NdsLoader::ApplyArm7Patches()
 #ifdef PICO_RTS_SNAPSHOT
     for (u32 value : std::span((const u32*)&sRtsSnapshotInfo,sizeof(sRtsSnapshotInfo)/4)) sendToArm9(value);
 #endif
+#ifdef PICO_RTS_RESTORE_PROBE
+    for(u32 i=0;i<8;++i){u32 word;memcpy(&word,sP4Code+i*4,4);sendToArm9(word);}
+    for(u32 i=0;i<4;++i)sendToArm9(0); // Reserved identity space, not a boot restriction.
+#endif
     PreprocessCheats();
     void* patchSpaceStart = (void*)receiveFromArm9();
     void* cheatsPtr = (void*)receiveFromArm9();
@@ -864,6 +898,9 @@ bool NdsLoader::TryLoadArm9()
         return false;
     }
 
+#ifdef PICO_RTS_RESTORE_PROBE
+    if(sP4HashEnabled)RtsSha256Update(&sP4CodeHash,(void*)_romHeader.arm9LoadAddress,_romHeader.arm9Size);
+#endif
     if (!TryDecryptSecureArea())
     {
         LOG_WARNING("Failed to decrypt secure area\n");
@@ -957,6 +994,14 @@ bool NdsLoader::TryLoadArm7()
         return false;
     }
 
+#ifdef PICO_RTS_RESTORE_PROBE
+    if(sP4HashEnabled)
+    {
+        RtsSha256Update(&sP4CodeHash,(void*)_romHeader.arm7LoadAddress,_romHeader.arm7Size);
+        RtsSha256Finish(&sP4CodeHash,sP4Code);
+        if(memcmp(sP4Code,RTS_P4_EXPECTED_CODE,32)!=0)sRtsSnapshotInfo.magic=0;
+    }
+#endif
     LOG_DEBUG("Arm7 loaded\n");
     return true;
 }

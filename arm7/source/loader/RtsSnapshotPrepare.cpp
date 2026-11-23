@@ -2,8 +2,23 @@
 #ifdef PICO_RTS_SNAPSHOT
 #include <memory>
 #include <cstring>
+#ifdef PICO_RTS_RESTORE_PROBE
+#include <span>
+#endif
 #include "fat/ff.h"
 #include "RtsSnapshotPrepare.h"
+
+#ifdef PICO_RTS_RESTORE_PROBE
+
+static u32 p4HeaderCrc(RtsM2Header& h)
+{
+    static const u32 t[16]={0,0x1db71064,0x3b6e20c8,0x26d930ac,0x76dc4190,0x6b6b51f4,0x4db26158,0x5005713c,0xedb88320,0xf00f9344,0xd6d6a3e8,0xcb61b38c,0x9b64c2b0,0x86d3d2d4,0xa00ae278,0xbdbdf21c};
+    u32 saved=h.reserved[82];h.reserved[82]=0;u32 value=~0u;
+    for(u32 word:std::span((const u32*)&h,128))
+    {value^=word;for(u32 j=0;j<8;++j)value=(value>>4)^t[value&15];}
+    h.reserved[82]=saved;return ~value;
+}
+#endif
 
 static bool fullVerifyRequested()
 {
@@ -20,13 +35,14 @@ static bool fullVerifyRequested()
     return strcmp(value,"fast")!=0;
 }
 
-bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info)
+bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path)
 {
     memset(&info,0,sizeof(info));
     FIL file;
-    if (f_open(&file, RTS_M2_FILE_PATH, FA_OPEN_ALWAYS|FA_READ|FA_WRITE) != FR_OK) return false;
+    if (f_open(&file, path, FA_OPEN_ALWAYS|FA_READ|FA_WRITE) != FR_OK) return false;
     auto close = [&]() { return f_close(&file)==FR_OK; };
     RtsM2Header header {};
+    bool created=f_size(&file)==0;
     UINT done=0;
     if (f_size(&file)==0)
     {
@@ -53,6 +69,19 @@ bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info)
             header.gameCode!=RTS_M2_GAME || header.payloadBytes!=RTS_M2_PAYLOAD_BYTES)
         { close();return false; } // Never replace a foreign or incompatible file.
     }
+#ifdef PICO_RTS_RESTORE_PROBE
+    // Preserve a completed checkpoint across boots. Only validate its header;
+    // runtime validates the full ROM/build/layout and payload before restore.
+    if(!created && p4HeaderCrc(header)!=header.reserved[82]){close();return false;}
+    if(created)
+    {
+        header.reserved[82]=p4HeaderCrc(header);
+        if(f_lseek(&file,0)!=FR_OK || f_write(&file,&header,512,&done)!=FR_OK || done!=512 || f_sync(&file)!=FR_OK)
+        {close();return false;}
+    }
+#else
+    (void)created;
+#endif
     DWORD map[RTS_M2_MAX_EXTENTS*2+2] {};
     map[0]=sizeof(map)/sizeof(map[0]);
     file.cltbl=map;

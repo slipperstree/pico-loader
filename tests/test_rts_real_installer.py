@@ -7,7 +7,7 @@ from ndspy import codeCompression
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn.arm_const import *
 full='--full' in sys.argv
-root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);M32='--m32' in sys.argv;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
+root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);P4='--p4' in sys.argv;M32='--m32' in sys.argv or P4;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_restore_p4.elf' if P4 else 'build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
 # This optional integration test uses a separately supplied, exact A2GJ image.
 # No ROM data or extracted game code is written into the repository.
 assert hashlib.sha256(rompath.read_bytes()).hexdigest()=='85e0e265a9d855a5d156a09794571b93fb13eab616814d5df49e9fcec01277fb', 'Unexpected test ROM'
@@ -74,10 +74,11 @@ hooks=struct.unpack('<I',u.mem_read(symbols['_ZL10sWaitHooks'],4))[0]
 report={'wfi_instruction':hex(wfi),'wfi_hooked':wfi!=0xee070f90,'total_wait_hooks':hooks,'allocations':state['allocations'],'requests':state['requests']}
 assert report['wfi_hooked'] and hooks==5,report
 u.mem_write(rom.arm7RamAddress,bytes(rom.arm7))
-sectors=(0x4c9600 if M32 else 0x424400 if M3 else 0x40c200)//512
-words=[0x32565452 if M32 else 0x31435452 if M3 else 0x324d5452,0x30002 if M32 else 0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,0x4a473241,0,sectors,0x1000]+[0]*62
+sectors=(0x4c9800 if P4 else 0x4c9600 if M32 else 0x424400 if M3 else 0x40c200)//512
+words=[0x30505452 if P4 else 0x32565452 if M32 else 0x31435452 if M3 else 0x324d5452,0x40001 if P4 else 0x30002 if M32 else 0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,0x4a473241,0,sectors,0x1000]+[0]*62
 words[7]=0x80000000 if full else 0
 u.mem_write(symbols['gRtsSnapshotInfo'],struct.pack('<72I',*words))
+if P4:u.mem_write(symbols['gRtsP4LoaderIdentity'],bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')+b'\0'*48)
 def prompt(uc,addr,size,data):
     state['warnings'].append(cstring(uc.reg_read(UC_ARM_REG_R0)))
     skip(uc,addr,size,data)
@@ -85,10 +86,11 @@ u.hook_add(UC_HOOK_CODE,prompt,begin=symbols['rtsProbeMessage'],end=symbols['rts
 arm7apply=next(v for k,v in symbols.items() if k.startswith('_ZNK11Arm7Patcher12ApplyPatches'))
 call(arm7apply,[0x07800100,platform,0,0x07800120,0x07800124,0])
 instruction,hook=struct.unpack('<II',u.mem_read(rom.arm7RamAddress+0x3c5c,8))
-folder=root/('build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
+folder=root/('build/rts-worker-p4' if P4 else 'build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
 meta=json.loads((folder/'RtsM2Image.json').read_text())
 worker_literal=struct.unpack('<I',u.mem_read(symbols['_ZL16sM2EntryAtTarget'],4))[0]
 worker=struct.unpack('<I',u.mem_read(worker_literal,4))[0]
+assert instruction==0xe51ff004, state['warnings']
 diagnostic_offset=symbols['rts7_diagnostic_address']-symbols['__start_patch_rts7']
 diagnostic=struct.unpack('<I',u.mem_read(hook+diagnostic_offset,4))[0]
 enabled_literal=struct.unpack('<I',u.mem_read(symbols['_ZL16sEnabledAtTarget'],4))[0]
@@ -96,7 +98,7 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and ('capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
+assert state['warnings'] and ('restore P4.0' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
@@ -105,7 +107,7 @@ for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),(
 clock=struct.unpack('<I',u.mem_read(hook+symbols['rts7_clock_address']-symbols['__start_patch_rts7'],4))[0]
 assert clock==worker+meta['clock_offset'] and clock%32==0
 assert clock+32<=worker+meta['config_offset']
-assert struct.unpack('<I',u.mem_read(worker+meta['config_offset']+296+76,4))[0]==(1 if full else 3)
+assert struct.unpack('<I',u.mem_read(worker+meta['config_offset']+296+76,4))[0]==((4 if full else 6) if P4 else (1 if full else 3))
 if not M3:assert ('FULL:' if full else 'FAST:') in state['warnings'][-1]
 assert struct.unpack('<I',u.mem_read(diagnostic,4))[0]==0, 'Boot config leaked into runtime refusal word'
 if M3:
@@ -114,6 +116,21 @@ if M3:
         offset=meta[{'mailbox':'mailbox_offset','capture':'arm7_capture_offset','service':'arm7_service_offset'}[label]]
         assert literal==worker+offset
         report[label]=hex(literal)
+if P4:
+    ptr=struct.unpack('<13I',u.mem_read(worker+meta['p4_pointers_offset'],52))
+    tail=struct.unpack('<I',u.mem_read(ptr[9],4))[0]
+    assert 0x02000000<=tail and tail+meta['p4_tail_bytes']<=0x02000800
+    assert bytes(u.mem_read(tail,meta['p4_tail_bytes']))==bytes(u.mem_read(ptr[8],meta['p4_tail_bytes']))
+    assert bytes(u.mem_read(ptr[7],32))==bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')
+    assert bytes(u.mem_read(ptr[7]+32,32)).hex()==meta['p4_build_fingerprint']
+    for literal,index in [('rts7_begin_address',1),('rts7_loop_address',0)]:
+        assert struct.unpack('<I',u.mem_read(hook+symbols[literal]-symbols['__start_patch_rts7'],4))[0]==ptr[index]
+    pcmPat=struct.pack('<II',0xe92d41f0,0xe1a08001);tmPat=struct.pack('<II',0xe2611801,0xe1a00200)
+    for pattern in (pcmPat,tmPat):
+        offset=bytes(rom.arm7).index(pattern);a=rom.arm7RamAddress+offset
+        ins,stub=struct.unpack('<II',u.mem_read(a,8));assert ins==0xe51ff004 and 0x0380bc90<=stub<0x0380c490
+    report['persistent_identity']='loaded code SHA + build fingerprint (full ROM host-verified)'
+    report['secure_tail']=hex(tail)
 report['clock']=hex(clock)
 report['workspace_bytes']=meta['memory_bytes']
 report.update({'arm7_hook':hex(hook),'worker':hex(worker),'diagnostic':hex(diagnostic),'enabled':enabled,'prompt':state['warnings'][-1]})

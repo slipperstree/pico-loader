@@ -5,6 +5,7 @@
 .arm
 .section .text.rtsRestoreArm9State,"ax"
 .global rtsRestoreArm9State
+.type rtsRestoreArm9State,%function
 rtsRestoreArm9State:
     mov r4,r1
     mov r5,r2
@@ -98,6 +99,7 @@ rtsRestoreArm9State:
 
 .section .text.rtsArm9RestoreTail,"ax"
 .global rtsArm9RestoreTail
+.type rtsArm9RestoreTail,%function
 rtsArm9RestoreTail:
     mrs r3,cpsr
     orr r3,r3,#192
@@ -119,3 +121,6 @@ rtsArm9RestoreTail:
     mcr p15,0,r2,c1,c0,0
     add r0,r0,#12
     ldmia r0,{r0-r12,pc}^
+
+.global rtsArm9RestoreTailEnd
+rtsArm9RestoreTailEnd:

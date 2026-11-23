@@ -47,8 +47,20 @@ rts7_keys:
     ldr r0, rts7_keyinput
     ldrh r1, [r0]
     ldr r2, rts7_hotkey
+#ifdef PICO_RTS_RESTORE_PROBE
+    tst r1,r2
+    moveq r3,#0
+    beq 80f
+    add r2,r2,#1
+    tst r1,r2
+    bne rts7_rearm
+    mov r3,#1
+80: ldr r0,rts7_operation_address
+    str r3,[r0]
+#else
     tst r1, r2
     bne rts7_rearm
+#endif
     adr r0, rts7_fired
     ldr r1, [r0]
     cmp r1, #0
@@ -160,6 +172,12 @@ rts7_m2_guard_done:
     ldrne r0,rts7_diagnostic_address
     strne r2,[r0]
 #endif
+#ifdef PICO_RTS_RESTORE_PROBE
+    mov r0,r10
+    ldr r12,rts7_begin_address
+    mov lr,pc
+    bx r12
+#endif
     ldr r0, rts7_ipc
     orr r3, r10, #0xc00
     strh r3, [r0]
@@ -172,6 +190,12 @@ rts7_m2_guard_done:
 #else
     ldr r7, rts7_frames
 #endif
+#ifdef PICO_RTS_RESTORE_PROBE
+    ldr r12,rts7_loop_address
+    mov lr,pc
+    bx r12
+    b rts7_release
+#else
     ldr r5, rts7_spin_budget
 #ifdef PICO_RTS_SNAPSHOT
     mov r11, #10
@@ -221,6 +245,7 @@ rts7_frame_loop:
     // No heartbeat while card I/O may be active: fail closed, do not resume.
     b rts7_m2_fault
 #endif
+#endif // !PICO_RTS_RESTORE_PROBE
 rts7_release:
     ldr r0, rts7_ipc
     strh r10, [r0]
@@ -281,6 +306,12 @@ rts7_clock_address: .word 0
 rts7_mailbox_address: .word 0
 rts7_capture_address: .word 0
 rts7_service_address: .word 0
+#ifdef PICO_RTS_RESTORE_PROBE
+.global rts7_operation_address,rts7_begin_address,rts7_loop_address
+rts7_operation_address: .word 0
+rts7_begin_address: .word 0
+rts7_loop_address: .word 0
+#endif
 #endif
 #endif
 #endif

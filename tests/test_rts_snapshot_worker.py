@@ -120,8 +120,8 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     def coproc(uc,addr,size,data):
         ins=struct.unpack('<I',uc.mem_read(addr,4))[0]
         crn,crm,opc2,rd=(ins>>16)&15,ins&15,(ins>>5)&7,(ins>>12)&15
-        if ins&(1<<20):uc.reg_write(REGS[rd],cp[(crn,crm,opc2)])
-        elif crn in (1,2,3):cp[(crn,crm,opc2)]=uc.reg_read(REGS[rd])
+        if ins&(1<<20):uc.reg_write((REGS+[UC_ARM_REG_SP,UC_ARM_REG_LR,UC_ARM_REG_PC])[rd],cp[(crn,crm,opc2)])
+        elif crn in (1,2,3):cp[(crn,crm,opc2)]=uc.reg_read((REGS+[UC_ARM_REG_SP,UC_ARM_REG_LR,UC_ARM_REG_PC])[rd])
         elif crn==7:state['cache_ops']+=1
         else:raise AssertionError(('Unexpected CP15',hex(ins)))
         uc.reg_write(UC_ARM_REG_PC,addr+4)

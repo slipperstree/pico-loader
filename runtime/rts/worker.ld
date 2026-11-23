@@ -4,9 +4,9 @@ ENTRY(rtsM2Entry)
 SECTIONS {
  . = 0x02200000;
  __image_start = .;
- .text : { KEEP(*(.text.entry)) KEEP(*(.text.arm7capture)) *(.text*) }
+ .text : { KEEP(*(.text.entry)) KEEP(*(.text.arm7capture)) KEEP(*(.text.p4Arm7Entry)) KEEP(*(.text.rtsArm9RestoreTail)) *(.text*) }
  .rodata : { *(.rodata*) }
- .data : { *(.data*) }
+ .data : { KEEP(*(.data.p4Pointers)) *(.data*) }
  . = ALIGN(4);
  __file_end = .;
  .bss (NOLOAD) : { *(.bss*) *(COMMON) }

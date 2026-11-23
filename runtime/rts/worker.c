@@ -7,7 +7,12 @@ volatile RtsArm7Mailbox gRtsArm7Mailbox __attribute__((aligned(32)));
 #endif
 #ifdef PICO_RTS_VIDEO_CAPTURE
 #include "RtsVideoCapture.h"
+#ifdef PICO_RTS_RESTORE_PROBE
+#include "RtsP4.h"
+#define gRtsVideo (gRtsP4Scratch.video)
+#else
 RtsVideoCapture gRtsVideo;
+#endif
 #endif
 typedef uint32_t u32;
 typedef uint16_t u16;
@@ -21,16 +26,7 @@ typedef uint8_t u8;
 #define IPC 0x04000180u
 #define WAIT_LIMIT 0x00400000u
 
-typedef struct {
-    RtsSnapshotInfo info;
-    u32 base, bytes;
-    RtsM2Header header;
-    u32 readback[128];
-    u16 videoBackup[96*8];
-    u32 oldDisplay;
-    u16 oldBrightness;
-    u8 oldVramC, videoActive;
-} WorkerState;
+#include "worker-state.h"
 _Static_assert(offsetof(WorkerState,base)==sizeof(RtsSnapshotInfo),"M2 workspace ABI");
 _Static_assert(offsetof(WorkerState,header)==sizeof(RtsSnapshotInfo)+8,"M2 header ABI");
 WorkerState gRtsM2;
@@ -63,10 +59,13 @@ static const u8 digits[10][5]={
 static u8 glyph(u32 c,u32 x)
 {
     if(c>='0' && c<='9')return digits[c-'0'][x];
-    if(c=='B'){const u8 a[5]={0x7f,0x49,0x49,0x49,0x36};return a[x];}
-    if(c=='M'){const u8 a[5]={0x7f,2,12,2,0x7f};return a[x];}
-    if(c=='S'){const u8 a[5]={0x46,0x49,0x49,0x49,0x31};return a[x];}
-    if(c=='/'){const u8 a[5]={0x20,0x10,8,4,2};return a[x];}
+    static const u8 letters[]="BMLSNAVE/";
+    static const u8 shapes[][5]={
+        {0x7f,0x49,0x49,0x49,0x36},{0x7f,2,12,2,0x7f},{0x7f,0x40,0x40,0x40,0x40},
+        {0x46,0x49,0x49,0x49,0x31},{0x7f,2,4,8,0x7f},{0x7e,9,9,9,0x7e},
+        {0x1f,0x20,0x40,0x20,0x1f},{0x7f,0x49,0x49,0x49,0x41},{0x20,0x10,8,4,2}};
+    if(c=='O')return digits[0][x];
+    for(u32 i=0;i<sizeof(letters)-1;++i)if(c==letters[i])return shapes[i][x];
     return 0;
 }
 static void progressOpen(void)
@@ -86,7 +85,9 @@ static void progress(u32 stage,u32 value)
 {
     // 'M2 S5 0128/8288'. A stationary stage identifies where a fault happened.
     u8 text[15]={'M',
-#ifdef PICO_RTS_ARM7_CAPTURE
+#ifdef PICO_RTS_RESTORE_PROBE
+    '4'
+#elif defined(PICO_RTS_ARM7_CAPTURE)
     '3'
 #else
     '2'
@@ -99,6 +100,9 @@ static void progress(u32 stage,u32 value)
     text[11]='8';text[12]='4';text[13]='8';text[14]='1';
 #endif
 #endif
+#ifdef PICO_RTS_RESTORE_PROBE
+    text[3]=gRtsP4.operation ? 'L' : 'S';text[14]='3';
+#endif
     static const u16 place[4]={1000,100,10,1};
     for(u32 field=0;field<(stage==9 ? 2u : 1u);++field)
     {
@@ -106,6 +110,9 @@ static void progress(u32 stage,u32 value)
         for(u32 i=0;i<4;++i){u8 digit=0;while(number>=place[i]){number-=place[i];++digit;}text[(field ? 11 : 6)+i]='0'+digit;}
     }
     if(stage==8){text[10]=' ';text[11]='B';text[12]=' ';text[13]=' ';text[14]=' ';}
+#ifdef PICO_RTS_RESTORE_PROBE
+    if(stage==8 && value==1001)memcpy(text,"NO SAVE   B    ",15);
+#endif
     volatile u16* fb=(volatile u16*)0x06840000;
     for(u32 y=0;y<8;++y)for(u32 x=0;x<96;++x)fb[y*256+x]=0x8000;
     for(u32 i=0;i<15;++i)for(u32 x=0;x<5;++x){u8 bits=glyph(text[i],x);for(u32 y=0;y<7;++y)if(bits&(1u<<y))fb[y*256+i*6+x]=0xffff;}
@@ -244,6 +251,9 @@ static void heartbeat(u32 index)
 }
 static void signalDone(void)
 {
+#ifdef PICO_RTS_RESTORE_PROBE
+    rtsP4ReplayCurrent();
+#endif
     REG16(IPC)=(REG16(IPC)&~0xf00u)|0xd00;
     for(u32 i=0;i<WAIT_LIMIT;++i)if((REG16(IPC)&15)!=12)return;
 }
@@ -259,7 +269,7 @@ __attribute__((noreturn)) static void fault(u32 code)
     // with an unknown card transaction still pending. User must reboot.
     for(;;)__asm__ volatile("nop");
 }
-static void flushCaches(void)
+__attribute__((noinline,target("arm"))) static void flushCaches(void)
 {
     u32 zero=0;
     for(u32 way=0;;way+=0x40000000)
@@ -328,7 +338,7 @@ static void showRefusal(u32 reason)
 }
 
 #ifdef PICO_RTS_ARM7_CAPTURE
-__attribute__((noinline)) static const u32* arm7Block(u32 block)
+__attribute__((noinline,noinline,target("arm"))) static const u32* arm7Block(u32 block)
 {
     volatile RtsArm7Mailbox* m=&gRtsArm7Mailbox;
     m->block=block;
@@ -344,15 +354,29 @@ __attribute__((noinline)) static const u32* arm7Block(u32 block)
     return (const u32*)m->data;
 }
 #endif
+__attribute__((noinline,target("arm"))) static void readCpu(u32* p)
+{
+    __asm__ volatile("mrc p15,0,%0,c1,c0,0\n mrc p15,0,%1,c9,c1,0\n mrc p15,0,%2,c9,c1,1\n mrc p15,0,%3,c2,c0,1\n mrc p15,0,%4,c3,c0,0":"=r"(p[0]),"=r"(p[1]),"=r"(p[2]),"=r"(p[3]),"=r"(p[4]));
+}
+__attribute__((noinline,target("arm"))) static void invalidateLine(u32 a){__asm__ volatile("mcr p15,0,%0,c7,c6,1"::"r"(a):"memory");}
+__attribute__((noinline,target("arm"))) static void setCache(u32 ci,u32 buffer,u32 control)
+{
+    __asm__ volatile("mcr p15,0,%0,c7,c10,4\n mcr p15,0,%0,c7,c5,0\n mcr p15,0,%1,c2,c0,1\n mcr p15,0,%2,c3,c0,0\n mcr p15,0,%3,c1,c0,0"::"r"(0),"r"(ci),"r"(buffer),"r"(control):"memory");
+}
 void rtsM2Run(const u32* entryRegs)
 {
     WorkerState* s=&gRtsM2;
     RtsM2Header* h=&s->header;
     // r12 in the worker wrapper carries the secure stub's region-2 guard.
     const u32* frame=entryRegs+14;
+#ifdef PICO_RTS_RESTORE_PROBE
+    rtsP4Arm9Begin();
+    u32 captureFlags=RTS_P4_EXPERIMENT_FLAG|(s->header.flags&RTS_M2_FLAG_NO_READBACK);
+#else
     u32 captureFlags=s->header.flags==3 ? 3 : 1;
-    u32 control,dtcm,itcm;
-    __asm__ volatile("mrc p15,0,%0,c1,c0,0\n mrc p15,0,%1,c9,c1,0\n mrc p15,0,%2,c9,c1,1":"=r"(control),"=r"(dtcm),"=r"(itcm));
+#endif
+    u32 initialCpu[5];readCpu(initialCpu);
+    u32 control=initialCpu[0],dtcm=initialCpu[1],itcm=initialCpu[2];
     // Finish hardware work already in flight; no CPU callback is resumed.
     // One-shot DMA and display capture can clear themselves at the next frame.
     if(asynchronousBusy())waitFrames(2);
@@ -366,8 +390,11 @@ void rtsM2Run(const u32* entryRegs)
     // ARM7 publishes into an otherwise read-only cache line. Invalidate only
     // that line before reading the shared diagnostic word; never clean stale data.
     u32 shared=(u32)&s->info.reserved;
-    __asm__ volatile("mcr p15,0,%0,c7,c6,1"::"r"(shared):"memory");
+    invalidateLine(shared);
     reason|=s->info.reserved;
+#ifdef PICO_RTS_RESTORE_PROBE
+    reason|=gRtsP4.error;
+#endif
     u32 first;
     if(!mapSector(0,&first))reason|=256;
     if(reason)
@@ -401,15 +428,17 @@ void rtsM2Run(const u32* entryRegs)
     h->reserved[1]=oldExmem; // Original Slot-1 ownership and wait settings.
     h->gateCpsr=frame[4];h->frameAddress=(u32)frame;h->flags=captureFlags; // diagnostic; bit 1 explicitly marks no full readback
     progress(2,0);
+#ifdef PICO_RTS_RESTORE_PROBE
+    rtsP4FreezeHeader();
+#endif
     flushCaches();
     // MPU must remain enabled for I-cache to work on ARM946E-S. This target's
     // SDK maps main RAM, MMIO/VRAM, DTCM and the ITCM data alias already; the
     // secure stub has opened region 2. Disable D-cache and write buffering only.
-    u32 oldCi,oldBuffer,zero=0;
-    __asm__ volatile("mrc p15,0,%0,c2,c0,1\n mrc p15,0,%1,c3,c0,0":"=r"(oldCi),"=r"(oldBuffer));
+    u32 oldCi=initialCpu[3],oldBuffer=initialCpu[4];
     h->reserved[2]=oldCi;h->reserved[3]=oldBuffer;
     u32 transientCi=oldCi|2u,transientControl=(control&~4u)|0x1000u;
-    __asm__ volatile("mcr p15,0,%0,c7,c5,0\n mcr p15,0,%1,c2,c0,1\n mcr p15,0,%0,c3,c0,0\n mcr p15,0,%2,c1,c0,0"::"r"(zero),"r"(transientCi),"r"(transientControl):"memory");
+    setCache(transientCi,0,transientControl);
 #ifdef PICO_RTS_ARM7_CAPTURE
     if(gRtsArm7Mailbox.context.magic!=RTS_ARM7_CONTEXT_MAGIC || gRtsArm7Mailbox.status){ioState.error=25;fault(8);}
     h->reserved[8]=0x31433741; // ARM7 context marker and fixed diagnostic layout.
@@ -422,6 +451,15 @@ void rtsM2Run(const u32* entryRegs)
     u32 started=gRtsM2Frames[0];
     u16 aux=REG16(0x040001a0);
     u32 oldCommand0=REG32(CMD),oldCommand1=REG32(CMD+4),oldCardControl=REG32(CARDCTRL);
+#ifdef PICO_RTS_RESTORE_PROBE
+    u32 p4Reason=rtsP4FreezePayload();
+    if(p4Reason){progress(8,p4Reason);waitRefusalAck();goto cleanup;}
+    if(gRtsP4.operation)
+    {
+        RtsP4CardState card={aux,oldCommand0,oldCommand1,oldCardControl,oldExmem};
+        p4Reason=rtsP4Load(&card);progress(8,p4Reason);waitRefusalAck();goto cleanup;
+    }
+#endif
     progress(3,0);
     if(!readSector(0,s->readback))fault(1);
     const RtsM2Header* previous=(const RtsM2Header*)s->readback;
@@ -431,6 +469,9 @@ void rtsM2Run(const u32* entryRegs)
     h->sequence=previous->sequence+1;
     h->phase=1; // invalidate completion BEFORE touching the previous payload
     progress(4,0);
+#ifdef PICO_RTS_RESTORE_PROBE
+    rtsP4SealHeader(h);
+#endif
     if(!writeSector(0,(const u32*)h))fault(3);
     u32 writeStarted=gRtsM2Frames[0];
     u32 value=~0u;
@@ -456,6 +497,9 @@ void rtsM2Run(const u32* entryRegs)
         else if(index<0x424200/512)src=arm7Block(index-0x40c000/512-1);
 #ifdef PICO_RTS_VIDEO_CAPTURE
         else if(index==0x424200/512)src=(const u32*)&gRtsVideo;
+#ifdef PICO_RTS_RESTORE_PROBE
+        else if(index==RTS_P4_SOUND_OFFSET/512)src=(const u32*)&gRtsSoundShadow;
+#endif
         else
         {
             if(!RtsReadVideoSector(&gRtsVideo,index-0x424200/512-1,(u16*)s->readback,s->videoBackup))
@@ -490,14 +534,33 @@ void rtsM2Run(const u32* entryRegs)
     h->reserved[7]=gRtsM2Frames[0]-started;
     progress(7,RTS_M2_PAYLOAD_BYTES/512);
     h->phase=2;
+#ifdef PICO_RTS_RESTORE_PROBE
+    rtsP4SealHeader(h);
+#endif
     if(!writeSector(0,(const u32*)h) || !readSector(0,s->readback))fault(7);
     for(u32 i=0;i<128;++i)if(s->readback[i]!=((u32*)h)[i])fault(8);
+#ifdef PICO_RTS_RESTORE_PROBE
+    gRtsP4SavedSequence=h->sequence;gRtsP4FreshSlot=1;
+cleanup:
+    rtsP4ReplayCurrent();
+#endif
     REG32(CMD)=oldCommand0;REG32(CMD+4)=oldCommand1;
     REG16(0x040001a0)=aux;
     REG32(CARDCTRL)=oldCardControl&0x7f7fffff;
-    __asm__ volatile("mcr p15,0,%0,c7,c10,4\n mcr p15,0,%0,c7,c5,0\n mcr p15,0,%1,c2,c0,1\n mcr p15,0,%2,c3,c0,0\n mcr p15,0,%3,c1,c0,0"::"r"(zero),"r"(oldCi),"r"(oldBuffer),"r"(control):"memory");
+    setCache(oldCi,oldBuffer,control);
     REG16(0x04000204)=oldExmem;
     if((REG16(0x04000204)^oldExmem)&0x800)fault(9);
     progressClose();
     signalDone();
 }
+
+#ifdef PICO_RTS_RESTORE_PROBE
+__attribute__((noinline,target("arm"))) void rtsP4InvalidateLine(uint32_t a){__asm__ volatile("mcr p15,0,%0,c7,c6,1"::"r"(a):"memory");}
+__attribute__((noinline,target("arm"))) uint32_t rtsP4GetControl(void){uint32_t c;__asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(c));return c;}
+__attribute__((noinline,target("arm"))) void rtsP4Drain(void){__asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(0):"memory");}
+uint32_t RtsP4Crc(uint32_t v,const uint32_t* p,uint32_t n){return crc(v,p,n);}
+int RtsP4ReadSector(uint32_t i,uint32_t* p){return readSector(i,p);}
+void RtsP4Progress(uint32_t stage,uint32_t value){progress(stage,value);}
+void RtsP4Heartbeat(uint32_t index){heartbeat(index);}
+void RtsP4Fault(uint32_t code){fault(code);}
+#endif

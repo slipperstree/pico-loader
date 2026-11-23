@@ -24,6 +24,10 @@
 #ifdef PICO_RTS_SNAPSHOT
 #include "RtsSnapshotInfo.h"
 RtsSnapshotInfo gRtsSnapshotInfo;
+#ifdef PICO_RTS_RESTORE_PROBE
+#include "RtsP4.h"
+RtsP4Identity gRtsP4LoaderIdentity;
+#endif
 #endif
 #include "patches/platform/LoaderPlatform.h"
 #include "patches/platform/LoaderPlatformFactory.h"
@@ -167,6 +171,10 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
 {
 #ifdef PICO_RTS_SNAPSHOT
     for (u32 i=0;i<sizeof(gRtsSnapshotInfo)/4;++i) ((u32*)&gRtsSnapshotInfo)[i]=receiveFromArm7();
+#endif
+#ifdef PICO_RTS_RESTORE_PROBE
+    for(u32 i=0;i<8;++i)((u32*)gRtsP4LoaderIdentity.code)[i]=receiveFromArm7();
+    for(u32 i=0;i<4;++i)((u32*)gRtsP4LoaderIdentity.session)[i]=receiveFromArm7();
 #endif
     void* cheats = nullptr;
     char* bannerSavePath = nullptr;

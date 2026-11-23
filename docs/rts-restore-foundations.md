@@ -1,8 +1,9 @@
 # Restore foundations: ARM9 state, file preflight and restartable sound
 
-These components are not yet connected to a live save/load build. G: stays on
-the hardware-validated M3.2 capture. This milestone does not implement complete
-game restoration and does not call any current diagnostic file loadable.
+These components were first validated independently. They are now integrated
+in the opt-in [P4 experiment](rts-p4-experiment.md). Existing M2/M3 files remain
+diagnostic captures and are not accepted as loadable P4 checkpoints. P4 has
+passed local execution models; physical save/load testing is still pending.
 
 ## ARM9 control state and final handoff
 
