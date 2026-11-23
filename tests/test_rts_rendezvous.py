@@ -59,6 +59,7 @@ if M2:
     patch('arm7','rts7_diagnostic_address',DIAGNOSTIC)
     patch('arm7','rts7_read_busy_address',DIAGNOSTIC+4)
     patch('arm7','rts7_write_busy_address',DIAGNOSTIC+8)
+    patch('arm7','rts7_clock_address',DIAGNOSTIC+12)
 
 REGS = [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
         UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,
@@ -271,6 +272,7 @@ c7.check();c9.check()
 assert bus.dimmed and bus.out==[0,0],bus.events
 expected=[(1,11),(0,10),(1,12)]+([(0,13)] if M2 else [])+[(1,0),(0,0)]
 assert bus.events==expected,bus.events
+if M2:assert c7.read(DIAGNOSTIC+12)==bus.frames and bus.frames>180, 'ARM7 frame clock mismatch'
 print('PASS two-CPU request/ACK/park/release with restored CPU state and brightness')
 for round_id in range(2):
     bus.worker_ticks=0;bus.frames=0
@@ -289,6 +291,7 @@ for round_id in range(2):
     c7.check();c9.check()
     assert bus.out==[0,0]
     assert bus.events[-len(expected):]==expected
+    if M2:assert c7.read(DIAGNOSTIC+12)==bus.frames and bus.frames>180, 'Frame clock did not reset'
 print('PASS three consecutive two-CPU rendezvous cycles')
 
 if not M2:

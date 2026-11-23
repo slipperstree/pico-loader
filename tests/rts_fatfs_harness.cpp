@@ -31,6 +31,16 @@ int main(int argc,char** argv){
     RtsSnapshotInfo info;
     assert(PrepareRtsSnapshotFile(info));
     assert(info.magic==RTS_M2_MAGIC && info.extentCount && info.dataStart>=32);
+    assert(info.reserved==RTS_M2_CONFIG_FULL_VERIFY); // Missing config -> full.
+    FIL mode;check(f_open(&mode,RTS_M2_VERIFY_PATH,FA_CREATE_ALWAYS|FA_WRITE));write(&mode,"fast\r\n",6);check(f_close(&mode));
+    assert(PrepareRtsSnapshotFile(info) && info.reserved==0);
+    check(f_open(&mode,RTS_M2_VERIFY_PATH,FA_CREATE_ALWAYS|FA_WRITE));write(&mode,"\xef\xbb\xbf" "fast\n",8);check(f_close(&mode));
+    assert(PrepareRtsSnapshotFile(info) && info.reserved==0);
+    check(f_open(&mode,RTS_M2_VERIFY_PATH,FA_CREATE_ALWAYS|FA_WRITE));write(&mode,"full\n",5);check(f_close(&mode));
+    assert(PrepareRtsSnapshotFile(info) && info.reserved==RTS_M2_CONFIG_FULL_VERIFY);
+    check(f_open(&mode,RTS_M2_VERIFY_PATH,FA_CREATE_ALWAYS|FA_WRITE));write(&mode,"invalid",7);check(f_close(&mode));
+    assert(PrepareRtsSnapshotFile(info) && info.reserved==RTS_M2_CONFIG_FULL_VERIFY);
+    puts("PASS verify config: missing/full/invalid -> full, fast CRLF -> fast");
     FIL f;check(f_open(&f,RTS_M2_FILE_PATH,FA_READ));assert(f_size(&f)==RTS_M2_FILE_BYTES);check(f_close(&f));
     unsigned sum=0;for(unsigned i=0;i<info.extentCount;++i){assert(info.extents[i].sector>=info.dataStart);assert(info.extents[i].count<=info.dataEnd-info.extents[i].sector);sum+=info.extents[i].count;}assert(sum==RTS_M2_FILE_SECTORS);
     unsigned last=info.extents[info.extentCount-1].sector+info.extents[info.extentCount-1].count-1;

@@ -5,6 +5,21 @@
 #include "fat/ff.h"
 #include "RtsSnapshotPrepare.h"
 
+static bool fullVerifyRequested()
+{
+    // Absent, unreadable or unrecognised configuration falls back to full.
+    FIL file;
+    if(f_open(&file,RTS_M2_VERIFY_PATH,FA_READ)!=FR_OK)return true;
+    char mode[16]{};UINT count=0;
+    bool ok=f_read(&file,mode,sizeof(mode)-1,&count)==FR_OK;
+    ok=(f_close(&file)==FR_OK)&&ok;
+    if(!ok)return true;
+    while(count && (mode[count-1]=='\r' || mode[count-1]=='\n' || mode[count-1]==' ' || mode[count-1]=='\t'))mode[--count]=0;
+    const char* value=mode;
+    if(count>=3 && (unsigned char)mode[0]==0xef && (unsigned char)mode[1]==0xbb && (unsigned char)mode[2]==0xbf)value+=3;
+    return strcmp(value,"fast")!=0;
+}
+
 bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info)
 {
     memset(&info,0,sizeof(info));
@@ -71,6 +86,7 @@ bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info)
     info.version=RTS_M2_VERSION;
     info.fileSectors=RTS_M2_FILE_SECTORS;
     info.gameCode=RTS_M2_GAME;
+    info.reserved=fullVerifyRequested() ? RTS_M2_CONFIG_FULL_VERIFY : 0;
     info.magic=RTS_M2_MAGIC; // Publish only a complete, closed and synced mapping.
     return true;
 }

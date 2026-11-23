@@ -31,11 +31,11 @@ def array(name,values,typ,width):
     for n in range(0,len(values),16):lines.append('    '+','.join(f'0x{x:0{width}x}' for x in values[n:n+16])+',')
     return '\n'.join(lines+['};'])
 text='#pragma once\n#include <stdint.h>\n'
-for name,value in [('LINK_BASE',base),('MEMORY_BYTES',end-base),('CONFIG_OFFSET',symbols['gRtsM2']-base),('ENTRY_OFFSET',symbols['rtsM2Entry']-base)]:
+for name,value in [('LINK_BASE',base),('MEMORY_BYTES',end-base),('CONFIG_OFFSET',symbols['gRtsM2']-base),('CLOCK_OFFSET',symbols['gRtsM2Frames']-base),('ENTRY_OFFSET',symbols['rtsM2Entry']-base)]:
     text+=f'inline constexpr uint32_t RTS_M2_{name} = 0x{value:x};\n'
 text+=array('RTS_M2_IMAGE',list(blob),'uint8_t',2)+'\n'
 text+=array('RTS_M2_RELOCS',relocs,'uint32_t',8)+'\n'
 out.write_text(text,encoding='utf-8')
-report={'link_base':base,'memory_bytes':end-base,'file_bytes':len(blob),'config_offset':symbols['gRtsM2']-base,'entry_offset':symbols['rtsM2Entry']-base,'relocations':relocs}
+report={'link_base':base,'memory_bytes':end-base,'file_bytes':len(blob),'config_offset':symbols['gRtsM2']-base,'clock_offset':symbols['gRtsM2Frames']-base,'entry_offset':symbols['rtsM2Entry']-base,'relocations':relocs}
 out.with_suffix('.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
 print('M2 runtime:',len(blob),'image bytes,',end-base,'reserved bytes,',len(relocs),'checked relocations')

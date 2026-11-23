@@ -151,7 +151,13 @@ rts7_m2_guard_done:
     strh r3, [r0]
     ldr r0, rts7_vcount
     ldrh r6, [r0]
+#ifdef PICO_RTS_SNAPSHOT
+    mov r7,#0
+    ldr r1,rts7_clock_address
+    str r7,[r1]
+#else
     ldr r7, rts7_frames
+#endif
     ldr r5, rts7_spin_budget
 #ifdef PICO_RTS_SNAPSHOT
     mov r11, #10
@@ -160,7 +166,13 @@ rts7_frame_loop:
     ldrh r3, [r0]
     cmp r3, r6
     mov r6, r3
+#ifdef PICO_RTS_SNAPSHOT
+    addlo r7,r7,#1
+    ldrlo r1,rts7_clock_address
+    strlo r7,[r1]           // Read-only, separately aligned counter for ARM9.
+#else
     sublo r7, r7, #1        // Physical scanline wrap, independent of game timers.
+#endif
 #ifndef PICO_RTS_SNAPSHOT
     cmp r7, #0
     beq rts7_release
@@ -241,5 +253,7 @@ rts7_read_busy_address: .word 0
 rts7_write_busy_address: .word 0
 rts7_exmem: .word 0x04000204
 rts7_spi: .word 0x040001a0
+.global rts7_clock_address
+rts7_clock_address: .word 0
 #endif
 #endif

@@ -6,6 +6,7 @@ from ndspy.rom import NintendoDSRom
 from ndspy import codeCompression
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn.arm_const import *
+full='--full' in sys.argv
 root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);elf=root/'build/picoLoader9_DSPICO_snapshot_m2.elf'
 # This optional integration test uses a separately supplied, exact A2GJ image.
 # No ROM data or extracted game code is written into the repository.
@@ -74,6 +75,7 @@ report={'wfi_instruction':hex(wfi),'wfi_hooked':wfi!=0xee070f90,'total_wait_hook
 assert report['wfi_hooked'] and hooks==5,report
 u.mem_write(rom.arm7RamAddress,bytes(rom.arm7))
 words=[0x324d5452,0x20001,0x40c200//512,1,0x800,0x10000,0x4a473241,0,0x40c200//512,0x1000]+[0]*62
+words[7]=0x80000000 if full else 0
 u.mem_write(symbols['gRtsSnapshotInfo'],struct.pack('<72I',*words))
 def prompt(uc,addr,size,data):
     state['warnings'].append(cstring(uc.reg_read(UC_ARM_REG_R0)))
@@ -92,12 +94,20 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and 'snapshot M2.4' in state['warnings'][-1],state['warnings']
+assert state['warnings'] and 'snapshot M2.5' in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
     assert bytes(u.mem_read(literal,4))==b'\0'*4
     report[symbol]=hex(literal)
+clock=struct.unpack('<I',u.mem_read(hook+symbols['rts7_clock_address']-symbols['__start_patch_rts7'],4))[0]
+assert clock==worker+meta['clock_offset'] and clock%32==0
+assert clock+32<=worker+meta['config_offset']
+assert struct.unpack('<I',u.mem_read(worker+meta['config_offset']+296+76,4))[0]==(1 if full else 3)
+assert ('FULL:' if full else 'FAST:') in state['warnings'][-1]
+assert struct.unpack('<I',u.mem_read(diagnostic,4))[0]==0, 'Boot config leaked into runtime refusal word'
+report['clock']=hex(clock)
+report['workspace_bytes']=meta['memory_bytes']
 report.update({'arm7_hook':hex(hook),'worker':hex(worker),'diagnostic':hex(diagnostic),'enabled':enabled,'prompt':state['warnings'][-1]})
 print(json.dumps({k:v for k,v in report.items() if k not in ('allocations','requests')},indent=2))
-(root/'build/rts-worker/installer-report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+(root/'build/rts-worker'/('installer-report-full.json' if full else 'installer-report.json')).write_text(json.dumps(report,indent=2),encoding='utf-8')

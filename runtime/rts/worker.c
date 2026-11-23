@@ -26,6 +26,7 @@ typedef struct {
 _Static_assert(offsetof(WorkerState,base)==sizeof(RtsSnapshotInfo),"M2 workspace ABI");
 _Static_assert(offsetof(WorkerState,header)==sizeof(RtsSnapshotInfo)+8,"M2 header ABI");
 WorkerState gRtsM2;
+volatile u32 gRtsM2Frames[8] __attribute__((aligned(32))); // Dedicated cache line, ARM7 writes word 0.
 u32 gRtsM2Stack[256] __attribute__((aligned(8)));
 
 void* memcpy(void* dst,const void* src,size_t size)
@@ -92,12 +93,13 @@ static void progressClose(void)
     s->videoActive=0;
 }
 
+static const u32 crcNibble[16]={0x00000000u,0x1db71064u,0x3b6e20c8u,0x26d930acu,0x76dc4190u,0x6b6b51f4u,0x4db26158u,0x5005713cu,0xedb88320u,0xf00f9344u,0xd6d6a3e8u,0xcb61b38cu,0x9b64c2b0u,0x86d3d2d4u,0xa00ae278u,0xbdbdf21cu};
 static u32 crc(u32 value,const u32* words,u32 count)
 {
     for (u32 i=0;i<count;++i)
     {
         value^=words[i];
-        for (u32 bit=0;bit<32;++bit)value=(value>>1)^((0u-(value&1))&0xedb88320u);
+        for(u32 nibble=0;nibble<8;++nibble)value=(value>>4)^crcNibble[value&15];
     }
     return value;
 }
@@ -283,13 +285,14 @@ void rtsM2Run(const u32* entryRegs)
     RtsM2Header* h=&s->header;
     // r12 in the worker wrapper carries the secure stub's region-2 guard.
     const u32* frame=entryRegs+14;
+    u32 captureFlags=s->header.flags==3 ? 3 : 1;
     u32 control,dtcm,itcm;
     __asm__ volatile("mrc p15,0,%0,c1,c0,0\n mrc p15,0,%1,c9,c1,0\n mrc p15,0,%2,c9,c1,1":"=r"(control),"=r"(dtcm),"=r"(itcm));
     // Finish hardware work already in flight; no CPU callback is resumed.
     // One-shot DMA and display capture can clear themselves at the next frame.
     if(asynchronousBusy())waitFrames(2);
     u32 reason=asynchronousBusy();
-    if((control&0x50000)!=0x50000 || (dtcm&0x3f)!=10 || itcm!=0x20 ||
+    if((control&0x50001)!=0x50001 || (dtcm&0x3f)!=10 || itcm!=0x20 ||
        (dtcm&~0xfffu)<0x02400000 || (dtcm&~0xfffu)>0x02ffc000)reason|=1;
     u16 oldExmem=REG16(0x04000204);
     // ARM7 publishes into an otherwise read-only cache line. Invalidate only
@@ -328,11 +331,19 @@ void rtsM2Run(const u32* entryRegs)
     h->regs[12]=frame[10];h->regs[13]=(u32)(frame+12);h->regs[14]=frame[11];h->regs[15]=entryRegs[13];
     h->reserved[0]=entryRegs[12]; // Original protected MPU region 2.
     h->reserved[1]=oldExmem; // Original Slot-1 ownership and wait settings.
-    h->gateCpsr=frame[4];h->frameAddress=(u32)frame;h->flags=1; // explicitly NOT restorable
+    h->gateCpsr=frame[4];h->frameAddress=(u32)frame;h->flags=captureFlags; // diagnostic; bit 1 explicitly marks no full readback
     progress(2,0);
     flushCaches();
-    u32 transientControl=control&~5u; // MPU + D-cache off; retain both TCMs and I-cache.
-    __asm__ volatile("mcr p15,0,%0,c1,c0,0"::"r"(transientControl):"memory");
+    // MPU must remain enabled for I-cache to work on ARM946E-S. This target's
+    // SDK maps main RAM, MMIO/VRAM, DTCM and the ITCM data alias already; the
+    // secure stub has opened region 2. Disable D-cache and write buffering only.
+    u32 oldCi,oldBuffer,zero=0;
+    __asm__ volatile("mrc p15,0,%0,c2,c0,1\n mrc p15,0,%1,c3,c0,0":"=r"(oldCi),"=r"(oldBuffer));
+    h->reserved[2]=oldCi;h->reserved[3]=oldBuffer;
+    u32 transientCi=oldCi|2u,transientControl=(control&~4u)|0x1000u;
+    __asm__ volatile("mcr p15,0,%0,c7,c5,0\n mcr p15,0,%1,c2,c0,1\n mcr p15,0,%0,c3,c0,0\n mcr p15,0,%2,c1,c0,0"::"r"(zero),"r"(transientCi),"r"(transientControl):"memory");
+    h->reserved[4]=RTS_M2_TIMING_MAGIC;
+    u32 started=gRtsM2Frames[0];
     u16 aux=REG16(0x040001a0);
     u32 oldCommand0=REG32(CMD),oldCommand1=REG32(CMD+4),oldCardControl=REG32(CARDCTRL);
     progress(3,0);
@@ -345,6 +356,7 @@ void rtsM2Run(const u32* entryRegs)
     h->phase=1; // invalidate completion BEFORE touching the previous payload
     progress(4,0);
     if(!writeSector(0,(const u32*)h))fault(3);
+    u32 writeStarted=gRtsM2Frames[0];
     u32 value=~0u;
     for(u32 index=0;index<RTS_M2_PAYLOAD_BYTES/512;++index)
     {
@@ -356,7 +368,7 @@ void rtsM2Run(const u32* entryRegs)
             {
                 // Header readback is no longer needed during payload writes.
                 // Reuse its sector buffer for workspace exclusion, retaining
-                // the existing 8 KiB reservation despite the diagnostic wait.
+                // the bounded arena reservation despite the diagnostic features.
                 clear(s->readback,sizeof(s->readback));src=s->readback;
             }
             else src=(const u32*)address;
@@ -369,16 +381,24 @@ void rtsM2Run(const u32* entryRegs)
         if((index&63)==0)progress(5,index);
     }
     h->payloadCrc=~value;
-    value=~0u;
-    for(u32 index=0;index<RTS_M2_PAYLOAD_BYTES/512;++index)
+    h->reserved[5]=gRtsM2Frames[0]-writeStarted;
+    if(!(h->flags&RTS_M2_FLAG_NO_READBACK))
     {
-        if(!readSector(index+1,s->readback))fault(5);
-        value=crc(value,s->readback,128);
-        heartbeat(index);
-        if((index&63)==0)progress(6,index);
+        u32 verifyStarted=gRtsM2Frames[0];
+        value=~0u;
+        for(u32 index=0;index<RTS_M2_PAYLOAD_BYTES/512;++index)
+        {
+            if(!readSector(index+1,s->readback))fault(5);
+            value=crc(value,s->readback,128);
+            heartbeat(index);
+            if((index&63)==0)progress(6,index);
+        }
+        h->verifyCrc=~value;
+        h->reserved[6]=gRtsM2Frames[0]-verifyStarted;
+        if(h->verifyCrc!=h->payloadCrc)fault(6);
     }
-    h->verifyCrc=~value;
-    if(h->verifyCrc!=h->payloadCrc)fault(6);
+    // Fast mode leaves verifyCrc at zero; never pretend a readback happened.
+    h->reserved[7]=gRtsM2Frames[0]-started;
     progress(7,RTS_M2_PAYLOAD_BYTES/512);
     h->phase=2;
     if(!writeSector(0,(const u32*)h) || !readSector(0,s->readback))fault(7);
@@ -386,9 +406,7 @@ void rtsM2Run(const u32* entryRegs)
     REG32(CMD)=oldCommand0;REG32(CMD+4)=oldCommand1;
     REG16(0x040001a0)=aux;
     REG32(CARDCTRL)=oldCardControl&0x7f7fffff;
-    u32 zero=0;
-    __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(zero):"memory");
-    __asm__ volatile("mcr p15,0,%0,c1,c0,0"::"r"(control):"memory");
+    __asm__ volatile("mcr p15,0,%0,c7,c10,4\n mcr p15,0,%0,c7,c5,0\n mcr p15,0,%1,c2,c0,1\n mcr p15,0,%2,c3,c0,0\n mcr p15,0,%3,c1,c0,0"::"r"(zero),"r"(oldCi),"r"(oldBuffer),"r"(control):"memory");
     REG16(0x04000204)=oldExmem;
     if((REG16(0x04000204)^oldExmem)&0x800)fault(9);
     progressClose();

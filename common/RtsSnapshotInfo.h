@@ -9,6 +9,11 @@
 #define RTS_M2_FILE_BYTES (512u + RTS_M2_PAYLOAD_BYTES)
 #define RTS_M2_FILE_SECTORS (RTS_M2_FILE_BYTES / 512u)
 #define RTS_M2_MAX_EXTENTS 32u
+#define RTS_M2_CONFIG_FULL_VERIFY 0x80000000u
+#define RTS_M2_VERIFY_PATH "/_pico/rts-verify.txt"
+#define RTS_M2_FLAG_DIAGNOSTIC 1u
+#define RTS_M2_FLAG_NO_READBACK 2u
+#define RTS_M2_TIMING_MAGIC 0x31544650u // PFT1: physical frame timing
 #define RTS_M2_FILE_PATH "/_pico/RTS-A2GJ-M2.bin"
 typedef struct { uint32_t count, sector; } RtsM2Extent;
 typedef struct {

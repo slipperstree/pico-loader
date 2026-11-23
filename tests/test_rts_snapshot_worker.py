@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent/'rts/pydeps'))
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
-args=[a for a in sys.argv[1:] if a not in ('--zero-ready-only','--restore-failure-only')]
+args=[a for a in sys.argv[1:] if a not in ('--zero-ready-only','--restore-failure-only','--fast-only')]
 root=Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain=os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
@@ -29,7 +29,7 @@ REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
 EXTENTS=[(2048,0x1000),(4096,0x3000),(SECTORS-6144,0x6000)]
 ALLOWED=[first+i for count,first in EXTENTS for i in range(count)]
 
-def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False,held_b=False,bad_tcm=False,owner_stuck=False,restore_stuck=False):
+def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False,held_b=False,bad_tcm=False,owner_stuck=False,restore_stuck=False,fast=False,corrupt_write=False):
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
     for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027c0000,0x4000),(0x06840000,0x20000),
                       (0x04000000,0x2000),(0x04100000,0x1000)]:u.mem_map(addr,size)
@@ -48,7 +48,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         struct.pack_into('<I',image,offset,value+base-meta['link_base'])
     workbytes=meta['memory_bytes']
     stack_start=base+symbols['gRtsM2Stack']-meta['link_base']
-    assert workbytes<=0x2000,workbytes
+    assert workbytes<=0x2400,workbytes # Explicit 9 KiB ceiling for mode/cache/timing additions
     u.mem_write(base,b'\0'*workbytes);u.mem_write(base,bytes(image))
     words=[MAGIC,VERSION,SECTORS,len(EXTENTS),0x800,0x10000,GAME,arm7_reason]
     for count,first in EXTENTS:words.extend((count,first))
@@ -56,6 +56,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     if badmap:words[9]=0x400 # point into FAT metadata: must be rejected
     cfg=base+meta['config_offset']
     u.mem_write(cfg,struct.pack('<72I',*words)+struct.pack('<II',base,workbytes))
+    u.mem_write(cfg+296+76,struct.pack('<I',3 if fast else 1))
     prepared=bytearray(512)
     struct.pack_into('<4I',prepared,0,MAGIC,VERSION,PAYLOAD+512,GAME)
     struct.pack_into('<I',prepared,20,PAYLOAD)
@@ -83,16 +84,37 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
            'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[],'ack_reads':[],'heartbeats':0,'exmem':initial_exmem,'exmem_writes':[]}
     if settle_dma and not foreign:raise AssertionError('Use foreign guard to test settling without a second full dump')
     control=0x0005707d
-    cp={(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0 if bad_tcm else 0x20}
+    cp={(2,0,1):0x42,(3,0,0):2,(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0 if bad_tcm else 0x20}
     def coproc(uc,addr,size,data):
         ins=struct.unpack('<I',uc.mem_read(addr,4))[0]
         crn,crm,opc2,rd=(ins>>16)&15,ins&15,(ins>>5)&7,(ins>>12)&15
         if ins&(1<<20):uc.reg_write(REGS[rd],cp[(crn,crm,opc2)])
-        elif crn==1:cp[(1,0,0)]=uc.reg_read(REGS[rd])
+        elif crn in (1,2,3):cp[(crn,crm,opc2)]=uc.reg_read(REGS[rd])
         elif crn==7:state['cache_ops']+=1
         else:raise AssertionError(('Unexpected CP15',hex(ins)))
         uc.reg_write(UC_ARM_REG_PC,addr+4)
     for offset in coprocessor:u.hook_add(UC_HOOK_CODE,coproc,begin=base+offset,end=base+offset)
+    # Use a monotonically increasing modeled frame clock for transfer timing;
+    # the real ARM7 polling/counter loop is exercised by the rendezvous test.
+    clock=base+meta['clock_offset']
+    def frame_read(uc,access,addr,size,value,data):uc.mem_write(clock,struct.pack('<I',state['commands']))
+    u.hook_add(UC_HOOK_MEM_READ,frame_read,begin=clock,end=clock+3)
+    # Actual A2GJ SDK MPU regions after the secure stub opens region 2.
+    regions=[0x04000033,0x0200002b,0,0x08000035,0x027c001b,0x0100002f,0xffff001d,0x027ff017]
+    ap=0x15111011;checked=set()
+    def memory_read(uc,access,addr,size,value,data):
+        if not cp[(1,0,0)]&1:return
+        key=(addr//4096,(addr+size-1)//4096)
+        if key in checked:return
+        for region in reversed(range(8)):
+            reg=regions[region]
+            if not reg&1:continue
+            amount=1<<(((reg>>1)&31)+1);start=reg&~(amount-1)
+            if start<=addr and addr+size<=start+amount:
+                assert ((ap>>(region*4))&15) in (1,2,3,5,6),('MPU read denied',hex(addr),region)
+                checked.add(key);return
+        raise AssertionError(('MPU unmapped read',hex(addr)))
+    u.hook_add(UC_HOOK_MEM_READ,memory_read)
     def stopped(uc,addr,size,data):
         if addr==done:state['done']=True
         else:state['fault']=uc.reg_read(UC_ARM_REG_R0)
@@ -155,6 +177,8 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             if state['own']==13:state['peer']=0
         elif addr==0x040001a4 and value&0x80000000:
             assert state['exmem']&0x800==0 and state['peer']==12, 'Card used without parked ARM7 and ARM9 ownership'
+            assert cp[(1,0,0)]&0x1001==0x1001 and not cp[(1,0,0)]&4
+            assert cp[(2,0,1)]&2 and cp[(3,0,0)]==0, 'I-cache/WB setup regressed'
             cmd=bytes(uc.mem_read(0x040001a8,8));op=cmd[0]
             argument=int.from_bytes(cmd[4:],'big')
             state['commands']+=1
@@ -173,6 +197,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             state['buffer']+=struct.pack('<I',value)
             state['word']+=1
             if state['word']==128:
+                if corrupt_write and state['sector']==ALLOWED[2]:state['buffer'][0]^=1
                 disk[state['sector']]=bytes(state['buffer']);state['writes'].append(state['sector']);state['mode']='idle'
                 if state['sector']==ALLOWED[0]:state['header_phases'].append(struct.unpack_from('<I',state['buffer'],16)[0])
     u.hook_add(UC_HOOK_MEM_WRITE,write,begin=0x02000000,end=0x04100013)
@@ -213,8 +238,17 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert state['header_phases']==[1,2],state['header_phases']
         blob=b''.join(disk[s] for s in ALLOWED)
         header=struct.unpack('<128I',blob[:512])
-        assert header[4]==2 and header[6]==header[17]==zlib.crc32(blob[512:])
-        assert blob[512:512+0x400000]==expected
+        assert header[4]==2 and header[19]==(3 if fast else 1)
+        if corrupt_write:assert fast and header[6]!=zlib.crc32(blob[512:])
+        else:assert header[6]==zlib.crc32(blob[512:])
+        if fast:
+            assert header[17]==0 and not any(stage==6 for stage,_ in state['stages'])
+            assert state['commands']<17000, 'Fast mode performed full payload readback'
+            assert header[44]==0
+        else:assert header[17]==header[6] and header[44]>0
+        assert header[42]==0x31544650 and header[43]>0 and header[45]>=header[43]
+        assert cp[(2,0,1)]==0x42 and cp[(3,0,0)]==2
+        if not corrupt_write:assert blob[512:512+0x400000]==expected
         assert blob[-0x8000:]==itcm
         assert header[20:24]==tuple(frame[6:10])
         assert header[24:32]==tuple(original_regs[4:12])
@@ -228,8 +262,13 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert struct.unpack('<I',u.mem_read(0x04000000,4))[0]==0x00110800
         assert bytes(u.mem_read(0x04000242,1))==b'\x84'
         assert struct.unpack('<H',u.mem_read(0x0400006c,2))[0]==0x8008
-        (folder/'model-snapshot.bin').write_bytes(blob)
+        (folder/('model-snapshot-fast-corrupt.bin' if corrupt_write else 'model-snapshot-fast.bin' if fast else 'model-snapshot.bin')).write_bytes(blob)
     print('PASS',label,'commands',state['commands'],'file-sector writes',len(state['writes']),flush=True)
+
+if '--fast-only' in sys.argv:
+    run_case('fast capture retains CRC but skips full readback',owner7=True,fast=True)
+    run_case('fast corrupted write remains detectable by desktop CRC',owner7=True,fast=True,corrupt_write=True)
+    raise SystemExit(0)
 
 if '--restore-failure-only' in sys.argv:
     run_case('ownership restoration failure holds CPUs with error display still open',owner7=True,restore_stuck=True)
