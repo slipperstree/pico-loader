@@ -1,0 +1,121 @@
+// Original, unlinked ARM946 restore research. Preconditions enforced by the
+// future complete-file/CPU validator; this raw primitive is NOT a load API.
+.cpu arm946e-s
+.syntax unified
+.arm
+.section .text.rtsRestoreArm9State,"ax"
+.global rtsRestoreArm9State
+rtsRestoreArm9State:
+    mov r4,r1
+    mov r5,r2
+    mrs r1,cpsr
+    orr r1,r1,#192
+    msr cpsr_c,r1
+    mov r3,#0
+    mcr p15,0,r3,c7,c10,4
+    mcr p15,0,r3,c7,c6,0
+    mcr p15,0,r3,c7,c5,0
+    ldr r3,[r0,#132]
+    mcr p15,0,r3,c6,c0,0
+    ldr r3,[r0,#136]
+    mcr p15,0,r3,c6,c1,0
+    mov r3,#0
+    mcr p15,0,r3,c6,c2,0
+    ldr r3,[r0,#144]
+    mcr p15,0,r3,c6,c3,0
+    ldr r3,[r0,#148]
+    mcr p15,0,r3,c6,c4,0
+    ldr r3,[r0,#152]
+    mcr p15,0,r3,c6,c5,0
+    ldr r3,[r0,#156]
+    mcr p15,0,r3,c6,c6,0
+    ldr r3,[r0,#160]
+    mcr p15,0,r3,c6,c7,0
+    ldr r3,[r0,#124]
+    mcr p15,0,r3,c5,c0,2
+    ldr r3,[r0,#128]
+    mcr p15,0,r3,c5,c0,3
+    ldr r3,[r0,#164]
+    mcr p15,0,r3,c9,c1,0
+    ldr r3,[r0,#168]
+    mcr p15,0,r3,c9,c1,1
+    ldr r3,[r0,#172]
+    mcr p15,0,r3,c9,c0,0
+    ldr r3,[r0,#176]
+    mcr p15,0,r3,c9,c0,1
+    ldr r3,[r0,#180]
+    mcr p15,0,r3,c13,c0,1
+    ldr r3,[r0,#112]
+    mcr p15,0,r3,c2,c0,0
+    ldr r3,[r0,#116]
+    mcr p15,0,r3,c2,c0,1
+    ldr r3,[r0,#120]
+    mcr p15,0,r3,c3,c0,0
+    ldr r3,[r0,#108]
+    bic r3,r3,#4
+    mcr p15,0,r3,c1,c0,0
+    bic r1,r1,#31
+    orr r2,r1,#31
+    msr cpsr_c,r2
+    ldr sp,[r0,#16]
+    ldr lr,[r0,#20]
+    orr r2,r1,#18
+    msr cpsr_c,r2
+    ldr sp,[r0,#28]
+    ldr lr,[r0,#32]
+    ldr r3,[r0,#36]
+    msr spsr_cxsf,r3
+    orr r2,r1,#19
+    msr cpsr_c,r2
+    ldr sp,[r0,#40]
+    ldr lr,[r0,#44]
+    ldr r3,[r0,#48]
+    msr spsr_cxsf,r3
+    orr r2,r1,#23
+    msr cpsr_c,r2
+    ldr sp,[r0,#52]
+    ldr lr,[r0,#56]
+    ldr r3,[r0,#60]
+    msr spsr_cxsf,r3
+    orr r2,r1,#27
+    msr cpsr_c,r2
+    ldr sp,[r0,#64]
+    ldr lr,[r0,#68]
+    ldr r3,[r0,#72]
+    msr spsr_cxsf,r3
+    orr r2,r1,#17
+    msr cpsr_c,r2
+    ldr sp,[r0,#76]
+    ldr lr,[r0,#80]
+    ldr r3,[r0,#84]
+    msr spsr_cxsf,r3
+    add r2,r0,#88
+    ldmia r2,{r8-r12}
+    orr r2,r1,#31
+    msr cpsr_c,r2
+    mov r0,r4
+    bx r5
+
+.section .text.rtsArm9RestoreTail,"ax"
+.global rtsArm9RestoreTail
+rtsArm9RestoreTail:
+    mrs r3,cpsr
+    orr r3,r3,#192
+    bic r3,r3,#31
+    orr r3,r3,#18
+    msr cpsr_c,r3
+    ldr r2,[r0]
+    msr spsr_cxsf,r2
+    add r1,r0,#4
+    ldmia r1,{r13,r14}^
+    nop
+    ldr r3,[r0,#68]
+    ldr r2,[r0,#72]
+    mov r1,#0
+    mcr p15,0,r1,c7,c10,4
+    mcr p15,0,r1,c7,c6,0
+    mcr p15,0,r1,c7,c5,0
+    mcr p15,0,r3,c6,c2,0
+    mcr p15,0,r2,c1,c0,0
+    add r0,r0,#12
+    ldmia r0,{r0-r12,pc}^

@@ -1,0 +1,109 @@
+// Original ARM946E-S state capture; no CP15 writes or game-stack accesses.
+.cpu arm946e-s
+.syntax unified
+.arm
+.section .text.rtsCaptureArm9Cpu,"ax"
+.global rtsCaptureArm9Cpu
+.type rtsCaptureArm9Cpu,%function
+rtsCaptureArm9Cpu:
+    str r1,[r0,#184]
+    str r2,[r0,#188]
+    str r3,[r0,#12]
+    mrs r1,cpsr
+    str r1,[r0,#8]
+    bic r1,r1,#31
+    orr r1,r1,#192
+    orr r2,r1,#31
+    msr cpsr_c,r2
+    str sp,[r0,#16]
+    str lr,[r0,#20]
+    mov r3,#0
+    str r3,[r0,#24]
+    orr r2,r1,#18
+    msr cpsr_c,r2
+    str sp,[r0,#28]
+    str lr,[r0,#32]
+    mrs r3,spsr
+    str r3,[r0,#36]
+    orr r2,r1,#19
+    msr cpsr_c,r2
+    str sp,[r0,#40]
+    str lr,[r0,#44]
+    mrs r3,spsr
+    str r3,[r0,#48]
+    orr r2,r1,#23
+    msr cpsr_c,r2
+    str sp,[r0,#52]
+    str lr,[r0,#56]
+    mrs r3,spsr
+    str r3,[r0,#60]
+    orr r2,r1,#27
+    msr cpsr_c,r2
+    str sp,[r0,#64]
+    str lr,[r0,#68]
+    mrs r3,spsr
+    str r3,[r0,#72]
+    orr r2,r1,#17
+    msr cpsr_c,r2
+    str sp,[r0,#76]
+    str lr,[r0,#80]
+    mrs r3,spsr
+    str r3,[r0,#84]
+    add r2,r0,#88
+    stmia r2,{r8-r12}
+    ldr r1,[r0,#8]
+    msr cpsr_cxsf,r1
+    mrc p15,0,r2,c1,c0,0
+    str r2,[r0,#108]
+    mrc p15,0,r2,c2,c0,0
+    str r2,[r0,#112]
+    mrc p15,0,r2,c2,c0,1
+    str r2,[r0,#116]
+    mrc p15,0,r2,c3,c0,0
+    str r2,[r0,#120]
+    mrc p15,0,r2,c5,c0,2
+    str r2,[r0,#124]
+    mrc p15,0,r2,c5,c0,3
+    str r2,[r0,#128]
+    mrc p15,0,r2,c6,c0,0
+    str r2,[r0,#132]
+    mrc p15,0,r2,c6,c1,0
+    str r2,[r0,#136]
+    mrc p15,0,r2,c6,c2,0
+    str r2,[r0,#140]
+    mrc p15,0,r2,c6,c3,0
+    str r2,[r0,#144]
+    mrc p15,0,r2,c6,c4,0
+    str r2,[r0,#148]
+    mrc p15,0,r2,c6,c5,0
+    str r2,[r0,#152]
+    mrc p15,0,r2,c6,c6,0
+    str r2,[r0,#156]
+    mrc p15,0,r2,c6,c7,0
+    str r2,[r0,#160]
+    mrc p15,0,r2,c9,c1,0
+    str r2,[r0,#164]
+    mrc p15,0,r2,c9,c1,1
+    str r2,[r0,#168]
+    mrc p15,0,r2,c9,c0,0
+    str r2,[r0,#172]
+    mrc p15,0,r2,c9,c0,1
+    str r2,[r0,#176]
+    mrc p15,0,r2,c13,c0,1
+    str r2,[r0,#180]
+    ldr r2,[r0,#184]
+    str r2,[r0,#16]
+    ldr r2,[r0,#188]
+    str r2,[r0,#20]
+    ldr r2,[r0,#12]
+    str r2,[r0,#140]           // Snapshot pre-guard region 2, not temporary 0.
+    mov r2,#0
+    str r2,[r0,#12]
+    str r2,[r0,#184]
+    str r2,[r0,#188]
+    mov r2,#1
+    str r2,[r0,#4]
+    ldr r2,=0x31503941
+    str r2,[r0]                // Publish complete snapshot last.
+    bx lr
+.ltorg
