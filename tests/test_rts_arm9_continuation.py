@@ -69,7 +69,7 @@ def execute(blob,label):
     result,ctx,_=prepare(blob);assert result==0,(label,result)
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
     for base,size in [(0x02000000,0x400000),(h[10],0x4000),(0x01ff8000,0x8000)]:u.mem_map(base,size)
-    u.mem_write(0x02000000,bytes(blob[512:512+0x400000]));u.mem_write(h[10],bytes(blob[512+0x400000:512+0x404000]));u.mem_write(0x01ff8000,bytes(blob[-0x8000:]))
+    u.mem_write(0x02000000,bytes(blob[512:512+0x400000]));u.mem_write(h[10],bytes(blob[512+0x400000:512+0x404000]));u.mem_write(0x01ff8000,bytes(blob[512+0x404000:512+0x40c000]))
     u.mem_write(codebase,binary.read_bytes());ctxaddr=h[8]+0x100;u.mem_write(ctxaddr,C.string_at(C.byref(ctx),68))
     thumb=bool(h[34]&1);post=h[34]&~1
     if thumb:
@@ -116,5 +116,5 @@ struct.pack_into('<I',forged,file_offset(bad,bad[37]+11*4,4),0x023fa100)
 struct.pack_into('<I',forged,6*4,zlib.crc32(forged[512:]))
 r,_,_=prepare(forged);assert r==6
 print('PASS incomplete/unverified captures, bad mode/frame/registers/stub/reader rejected without publishing context')
-if len(sys.argv)>2:execute(Path(sys.argv[2]).read_bytes(),'user-local M2.6 capture')
+if len(sys.argv)>2:execute(Path(sys.argv[2]).read_bytes(),'user-local diagnostic capture')
 (work/'RESULTS.json').write_text(json.dumps({'synthetic_arm':'PASS','synthetic_thumb':'PASS','negative_guards':'PASS','real_capture':'PASS' if len(sys.argv)>2 else 'not supplied','live_restore_enabled':False},indent=2),encoding='utf-8')

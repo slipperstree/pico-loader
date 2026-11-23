@@ -59,13 +59,13 @@ or save-state implementation code is copied.
 ## Remaining work before a real load
 
 1. M3.1 now captures ARM7 private 64 KiB and shared 32 KiB WRAM plus a parked
-   banked context through a stackless helper; hardware validation remains.
+   banked context through a stackless helper; hardware capture validation passed.
    Still implement restoring that memory and its interrupted
    CPU context, banked registers and IRQ return state. ARM9 cannot simply read
    private ARM7 WRAM; it needs an ARM7-side staging protocol that preserves the
    paused frame and keeps both CPUs on controlled stacks during restore.
 2. M3.2 now captures original VRAM, palettes, OAM and bounded readable display
-   metadata; hardware capture validation remains. Still capture the relevant
+   metadata; hardware capture validation passed. Still capture the relevant
    write-only display/3D state, IRQ/timer/IPC state,
    and sound state. A raw MMIO dump is insufficient for write-only, write-one-
    to-clear or hidden device state; unsupported states need explicit limits.
@@ -84,3 +84,7 @@ the missing pieces avoids presenting this CPU primitive as a working load.
 
 M3.1 hardware capture passed (CRC AC5B6BD9, about 15.35 s);
 [M3.2 display capture](rts-video-capture-m32.md) is the next integrated candidate.
+
+M3.2 hardware capture passed (CRC DCF52708, approximately 17.93 s).
+[ARM7 restore primitives](rts-arm7-restore.md) now exercise actual private
+WRAM/context restoration in a CPU model, not on hardware. G: stays on M3.2.

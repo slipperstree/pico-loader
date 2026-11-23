@@ -45,7 +45,11 @@ dual-CPU handshake, ARM7 contexts/error paths and real FatFs preparation pass.
 The desktop checker accepts the extended sections and rejects corrupt VRAM,
 forged layout and unsupported ownership. M2/M3.1 checker regressions pass.
 
-Hardware capture remains to be tested for M3.2. This is not restoration QA.
+M3.2 hardware capture passed: phase 2, sequence 1, CRC DCF52708, 1076 write
+frames (approximately 17.93 s). User observed normal return in under 20 s.
+ARM7 frame/stack and display section layout passed desktop inspection.
+The private snapshot is retained outside source and artifacts.
+This validates capture and normal return, not game-state restoration.
 Remaining restore work includes ARM9 banked/CP15 state, write-only graphics
 state, sound/IRQ/timer/IPC/hidden device state, file identity/preflight and safe
 memory restoration plus coordinated CPU release. No load hotkey is enabled.

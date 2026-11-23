@@ -10,14 +10,19 @@ static int capturedStack(const RtsM2Header* h,u32 address,u32 bytes)
         return address+bytes<=h->workspaceBase || address>=h->workspaceBase+h->workspaceBytes;
     return within(address,bytes,h->dtcmBase,0x4000);
 }
+static int knownLayout(const RtsM2Header* h)
+{
+    return (h->magic==0x324d5452 && h->version==0x20001 && h->fileBytes==0x40c200 && h->payloadBytes==0x40c000) ||
+           (h->magic==0x31435452 && h->version==0x30001 && h->fileBytes==0x424400 && h->payloadBytes==0x424200) ||
+           (h->magic==0x32565452 && h->version==0x30002 && h->fileBytes==0x4c9600 && h->payloadBytes==0x4c9400);
+}
 static int secure(u32 address,u32 bytes){return within(address,bytes,0x02000000,0x800);}
 int RtsBuildArm9Continuation(const RtsM2Header* h,int payloadVerified,
     RtsReadCapturedBytes read,void* user,RtsArm9Continuation* out)
 {
     if(!payloadVerified)return RTS_CONTINUATION_UNVERIFIED;
-    if(!h || !read || !out || h->magic!=RTS_M2_MAGIC || h->version!=RTS_M2_VERSION ||
-       h->gameCode!=RTS_M2_GAME || h->phase!=2 || h->error || h->fileBytes!=RTS_M2_FILE_BYTES ||
-       h->payloadBytes!=RTS_M2_PAYLOAD_BYTES || (h->flags!=1 && h->flags!=3) ||
+    if(!h || !read || !out || !knownLayout(h) ||
+       h->gameCode!=RTS_M2_GAME || h->phase!=2 || h->error || (h->flags!=1 && h->flags!=3) ||
        h->dtcmBytes!=0x4000 || h->itcmBase!=0x01ff8000 || h->itcmBytes!=0x8000 ||
        h->dtcmBase<0x02400000 || h->dtcmBase>0x02ffc000 || (h->dtcmBase&0xfff) ||
        !h->workspaceBytes || (h->workspaceBase&511) || (h->workspaceBytes&511) ||
