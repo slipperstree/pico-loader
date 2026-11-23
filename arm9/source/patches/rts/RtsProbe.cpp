@@ -185,7 +185,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_SNAPSHOT
-    rtsProbeMessage("RTS research: snapshot M2\nCapture only, NO load yet.\nHold L+R+Down+A.\nWrites RTS-A2GJ-M2.bin.\nWait until screens recover.");
+    rtsProbeMessage("RTS research: snapshot M2.1\nCapture only, NO load yet.\nHold L+R+Down+A.\nWrites RTS-A2GJ-M2.bin.\nWait until screens recover.");
 #else
     rtsProbeMessage("RTS research: CPU probe M1\nNOT save/load states yet.\nHold L+R+Down+A.\nDim/pause about 3 seconds,\nthen continue automatically.");
 #endif

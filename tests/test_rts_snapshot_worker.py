@@ -6,7 +6,8 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent/'rts/pydeps'))
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
-root=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parents[1]
+args=[a for a in sys.argv[1:] if a!='--zero-ready-only']
+root=Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain=os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
 folder=root/'build/rts-worker'
@@ -28,14 +29,19 @@ REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
 EXTENTS=[(2048,0x1000),(4096,0x3000),(SECTORS-6144,0x6000)]
 ALLOWED=[first+i for count,first in EXTENTS for i in range(count)]
 
-def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False):
+def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False):
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
-    for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027e0000,0x4000),
+    for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027c0000,0x4000),(0x06840000,0x20000),
                       (0x04000000,0x2000),(0x04100000,0x1000)]:u.mem_map(addr,size)
     main=bytes(range(256))*16384
     itcm=bytes(reversed(range(256)))*128
     u.mem_write(0x02000000,main);u.mem_write(0x01ff8000,itcm)
-    u.mem_write(0x027e0000,b'\x5a'*0x4000)
+    u.mem_write(0x027c0000,b'\x5a'*0x4000)
+    video=bytes(range(256))*512
+    u.mem_write(0x06840000,video)
+    u.mem_write(0x04000000,struct.pack('<I',0x00110800))
+    u.mem_write(0x0400006c,struct.pack('<H',0x8008))
+    u.mem_write(0x04000242,b'\x84')
     image=bytearray(original)
     for offset in meta['relocations']:
         value=struct.unpack_from('<I',image,offset)[0]
@@ -58,22 +64,23 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     done=0x020f0000
     u.mem_write(done,b'\x70\x47')
     original_regs=[0x11110000+i for i in range(13)]
-    sp=0x027e3d00
+    sp=0x027c3d00
     frame=[0x4003,0x8002,0x400b,0x000000df,0xa000001f,0x11110003,
            0x88880000,0x88880001,0x88880002,0x88880003,0x8888000c,0x02001235]
-    u.mem_write(sp,struct.pack('<12I',*frame))
+    u.mem_write(sp,struct.pack('<14I',0x023e0021,0x02000111,*frame))
     u.reg_write(UC_ARM_REG_CPSR,0xdf)
     u.reg_write(UC_ARM_REG_SP,sp);u.reg_write(UC_ARM_REG_LR,done|1)
     for reg,value in zip(REGS,original_regs):u.reg_write(reg,value)
     u.mem_write(0x04000204,struct.pack('<H',0))
     u.mem_write(0x040001a0,struct.pack('<H',0x8000))
+    if display_capture:u.mem_write(0x04000064,struct.pack('<I',0x80000000))
     if busy:u.mem_write(0x040000b8,struct.pack('<I',0x80000000))
     expected=bytearray(u.mem_read(0x02000000,0x400000))
     expected[base-0x02000000:base-0x02000000+workbytes]=b'\0'*workbytes
     state={'mode':'idle','word':0,'sector':0,'read_sector':0,'peer':12,'own':10,
            'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0}
     control=0x0005707d
-    cp={(1,0,0):control,(9,1,0):0x027e000a,(9,1,1):0x20}
+    cp={(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0x20}
     def coproc(uc,addr,size,data):
         ins=struct.unpack('<I',uc.mem_read(addr,4))[0]
         crn,crm,opc2,rd=(ins>>16)&15,ins&15,(ins>>5)&7,(ins>>12)&15
@@ -99,7 +106,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             if timeout and state['mode']=='poll':value=0x80000000
             uc.mem_write(addr,struct.pack('<I',value))
         elif addr==0x04100010:
-            if state['mode']=='poll':value=1;state['mode']='idle'
+            if state['mode']=='poll':value=0 if zero_ready else 1;state['mode']='idle'
             else:
                 assert state['mode']=='read',state
                 blob=disk.get(state['read_sector'],b'\0'*512)
@@ -112,7 +119,9 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     def write(uc,access,addr,size,value,data):
         if 0x02000000<=addr<0x02400000:
             assert base<=addr and addr+size<=base+workbytes,('Game RAM modified',hex(addr))
-            assert stack_start<=addr and addr+size<=stack_start+1024 or cfg<=addr,('Worker code overwritten / stack overflow',hex(addr))
+            current_sp=uc.reg_read(UC_ARM_REG_SP)
+            if base<=current_sp<base+workbytes:assert stack_start<=current_sp<=stack_start+1024,('Worker stack escaped',hex(current_sp))
+            assert stack_start<=addr and addr+size<=stack_start+1024 or cfg<=addr or base+symbols['ioBudget']-meta['link_base']<=addr<base+symbols['ioBudget']-meta['link_base']+4,('Worker code overwritten / stack overflow',hex(addr))
         elif addr==0x04000180:
             state['own']=(value>>8)&15
             assert value&0x4000,'IPCSYNC IRQ control lost'
@@ -140,12 +149,13 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
                 if state['sector']==ALLOWED[0]:state['header_phases'].append(struct.unpack_from('<I',state['buffer'],16)[0])
     u.hook_add(UC_HOOK_MEM_WRITE,write,begin=0x02000000,end=0x04100013)
     u.emu_start(base+meta['entry_offset'],0,count=1500000000)
-    if badmap or busy:
+    if badmap or busy or display_capture:
         assert state['done'] and not state['writes'] and not state['commands'],state
-    elif foreign or corrupt or timeout:
+    elif foreign or corrupt or timeout or zero_ready:
         assert state['fault']==(2 if foreign else 6 if corrupt else 1),state
         assert not state['done'] and 2 not in state['header_phases']
-        if foreign or timeout:assert not state['writes']
+        if foreign or timeout or zero_ready:assert not state['writes']
+        if zero_ready:assert state['commands']<=4098
     else:
         assert state['done'] and state['fault'] is None,state
         assert state['header_phases']==[1,2],state['header_phases']
@@ -156,18 +166,25 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert blob[-0x8000:]==itcm
         assert header[20:24]==tuple(frame[6:10])
         assert header[24:32]==tuple(original_regs[4:12])
-        assert header[33]==sp+48 and header[36]==frame[4]
+        assert header[33]==sp+56 and header[36]==frame[4] and header[38]==0x023e0021
         assert [u.reg_read(reg) for reg in REGS]==original_regs
         assert u.reg_read(UC_ARM_REG_SP)==sp and u.reg_read(UC_ARM_REG_LR)==done|1
         assert cp[(1,0,0)]==control and state['cache_ops']>=257
+        assert bytes(u.mem_read(0x06840000,0x20000))==video, 'VRAM progress line not restored'
+        assert struct.unpack('<I',u.mem_read(0x04000000,4))[0]==0x00110800
+        assert bytes(u.mem_read(0x04000242,1))==b'\x84'
+        assert struct.unpack('<H',u.mem_read(0x0400006c,2))[0]==0x8008
         (folder/'model-snapshot.bin').write_bytes(blob)
     print('PASS',label,'commands',state['commands'],'file-sector writes',len(state['writes']),flush=True)
 
-run_case('complete 4 MiB + DTCM + ITCM capture and full readback CRC')
-run_case('alternate relocation address',base=0x023e0000)
-run_case('invalid mapping refuses all SD commands',badmap=True)
-run_case('DMA precheck refuses all SD commands',busy=True)
-run_case('foreign file is never overwritten',foreign=True)
-run_case('corrupt readback never commits completion',corrupt=True)
-run_case('transport timeout fails closed without any write',timeout=True)
-print('Actual SD timing, cache coherency, MPU/TCM mappings and console hardware remain unvalidated.')
+if '--zero-ready-only' not in sys.argv:
+    run_case('complete 4 MiB + DTCM + ITCM capture and full readback CRC')
+    run_case('alternate relocation address',base=0x023e0000)
+    run_case('invalid mapping refuses all SD commands',badmap=True)
+    run_case('DMA precheck refuses all SD commands',busy=True)
+    run_case('foreign file is never overwritten',foreign=True)
+    run_case('corrupt readback never commits completion',corrupt=True)
+    run_case('transport timeout fails closed without any write',timeout=True)
+    print('Actual SD timing, cache coherency, MPU/TCM mappings and console hardware remain unvalidated.')
+run_case('continuous SD-not-ready response terminates within shared retry budget',zero_ready=True)
+run_case('active display capture declines without SD access',display_capture=True)

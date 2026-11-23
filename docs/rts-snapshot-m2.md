@@ -8,6 +8,11 @@ state loading, and its files must not be presented as usable save states.
 The requested hotkey is now **L + R + Down + A** (`0x381`). The old Select
 combination no longer triggers. The included M1 fallback uses the same new key.
 
+
+The first M2 hardware attempt froze before any capture write completed. M2.1
+fixes an SDK MPU entry defect and adds visible progress; see
+[rts-m2-entry-fix.md](rts-m2-entry-fix.md). M2.1 hardware validation is pending.
+
 ## Capture path
 
 - Still restricted to DSPico, NTR A2GJ, SDK `0x03017532`, cheats off.
@@ -20,7 +25,7 @@ combination no longer triggers. The included M1 fallback uses the same new key.
 - The ARM9 worker is compiled as a self-contained ARM image. The packer rejects
   external calls and unexpected relocations; only validated internal ABS32
   locations are rebased. The generated image/header lives in `build/rts-worker`.
-- The runtime needs a 5.5 KiB main-RAM workspace in this build. It is reserved
+- The M2.1 runtime needs an 8 KiB main-RAM workspace in this build. It is reserved
   through ARM7's arena, aligned to 512 bytes, and bounded below `0x023FF000`.
   On the exact ROM, the existing main arena literal is `0x027F9C08`; after the
   existing 512-byte save buffer, this maps to a workspace at `0x023FA000`.

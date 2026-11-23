@@ -52,7 +52,7 @@ for block, literal, symbol in [
 patch('gate','rts9_enabled',1)
 HOTKEY=struct.unpack_from('<I',blobs['arm7'],addresses['rts7_hotkey']-bases['arm7'])[0]
 assert HOTKEY==0x381, 'User requested L+R+Down+A'
-WORKER=0x02020000
+WORKER=0x023fa000
 if M2:patch('dim','rts9_m2_entry',WORKER)
 
 REGS = [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
@@ -80,6 +80,7 @@ class CPU:
         self.u = Uc(UC_ARCH_ARM, UC_MODE_ARM)
         self.u.mem_map(0x02000000,0x400000)
         self.u.mem_map(0x03800000,0x10000)
+        self.u.mem_map(0x027c0000,0x4000)
         self.u.mem_map(0x04000000,0x2000)
         for name, blob in blobs.items():
             self.u.mem_write(bases[name], bytes(blob))
@@ -87,7 +88,7 @@ class CPU:
         self.u.mem_write(DONE,b'\x70\x47')
         self.initial_cpsr = 0xa0000000|mode
         self.u.reg_write(UC_ARM_REG_CPSR,self.initial_cpsr)
-        self.sp = 0x023ff000 if side == 0 else 0x0380f000
+        self.sp = 0x027c3f00 if side == 0 else 0x0380f000
         self.u.reg_write(UC_ARM_REG_SP,self.sp)
         self.initial_regs = [0x12340000+i for i in range(13)]
         for r,v in zip(REGS,self.initial_regs): self.u.reg_write(r,v)
@@ -98,6 +99,7 @@ class CPU:
         self.done=False
         self.thumb=thumb
         self.fault=False
+        self.mpu_region2=0x023e0021
         self.u.hook_add(UC_HOOK_CODE,self.code)
         self.u.hook_add(UC_HOOK_MEM_READ,self.read_mmio)
         self.u.hook_add(UC_HOOK_MEM_WRITE,self.write_mmio)
@@ -105,9 +107,17 @@ class CPU:
     def write(self,addr,value,size=4): self.u.mem_write(addr,int(value).to_bytes(size,'little'))
     def read(self,addr,size=4): return int.from_bytes(self.u.mem_read(addr,size),'little')
     def code(self,u,addr,size,data):
+        if M2 and self.side==0 and bases['dim']<=addr<bases['dim']+len(blobs['dim']):
+            ins=struct.unpack('<I',u.mem_read(addr,4))[0]
+            if ins&0x0fef0fff in (0x0e060f12,0x0e160f12):
+                rd=(ins>>12)&15
+                if ins&(1<<20):u.reg_write(REGS[rd],self.mpu_region2)
+                else:self.mpu_region2=u.reg_read(REGS[rd])
+                u.reg_write(UC_ARM_REG_PC,addr+4);return
         if M2 and addr==addresses['rts7_m2_fault']:
             self.fault=True;u.emu_stop();return
         if M2 and self.side==0 and addr==WORKER:
+            if self.mpu_region2&1:raise PermissionError('Protected SDK ARM7 region executed before MPU guard opened')
             assert self.bus.out[1]==12 or self.bus.worker_ticks>600
             self.bus.worker_ticks+=1
             if self.bus.worker_ticks<=600:
@@ -178,6 +188,7 @@ class CPU:
             assert self.u.reg_read(UC_ARM_REG_SP)==self.sp
             assert self.u.reg_read(UC_ARM_REG_LR)==DONE|1
             assert self.u.reg_read(UC_ARM_REG_CPSR)&0xf00000df==self.initial_cpsr&0xf00000df
+        if self.side==0:assert self.mpu_region2==0x023e0021
         assert self.read(IME)==1
         assert self.read(BRIGHT,2)==0x4003
         assert self.read(SUBBRIGHT,2)==0x8002
@@ -328,3 +339,23 @@ if M2:
         if cpu.fault:break
     assert cpu.fault and not cpu.done and cpu.read(IME)==0 and bus.out[1]==12
     print('PASS lost snapshot heartbeat holds ARM7 instead of resuming an unknown card transaction')
+
+if M2:
+    # Mutation equivalent to the missing opening step in M2: the regression
+    # must reject entry into the real protected 023FA000 worker address.
+    offset=next(i for i in range(0,len(blobs['dim']),4) if struct.unpack_from('<I',blobs['dim'],i)[0]==0xee060f12)
+    saved=bytes(blobs['dim'][offset:offset+4])
+    blobs['dim'][offset:offset+4]=struct.pack('<I',0xe1a00000)
+    bus=Bus();bus.keys=0x3ff^HOTKEY;c7=CPU(bus,1);c9=CPU(bus,0)
+    for _ in range(30):call7(c7)
+    c9.start()
+    for _ in range(10):
+        c9.step()
+        if bus.out[0]==10:break
+    c7.start();caught=False
+    try:
+        for _ in range(50):c7.step();c9.step()
+    except PermissionError:caught=True
+    assert caught, 'Old missing-MPU-guard bug escaped the model'
+    blobs['dim'][offset:offset+4]=saved
+    print('PASS MPU entry regression rejects old guard omission and checks exact restoration')

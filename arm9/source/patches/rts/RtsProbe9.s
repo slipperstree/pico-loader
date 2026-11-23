@@ -97,8 +97,16 @@ rts9_dim:
     strh r1, [r0]
     strh r1, [r2]            // Dim only after ARM7 also reports parked.
 #ifdef PICO_RTS_SNAPSHOT
+    // SDK's region 2 denies access to 023E0000-023FFFFF in 4 MiB mode.
+    // Open it from this safe secure-area stub BEFORE entering the worker.
+    mrc p15, 0, r0, c6, c2, 0
+    stmdb sp!, {r0, lr}
+    mov r0, #0
+    mcr p15, 0, r0, c6, c2, 0
     ldr r3, rts9_m2_entry
     blx r3
+    ldmia sp!, {r0, lr}
+    mcr p15, 0, r0, c6, c2, 0
     b 5f
 #else
     ldr r0, 3f
