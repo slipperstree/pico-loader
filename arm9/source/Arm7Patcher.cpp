@@ -20,6 +20,11 @@
 #include "Arm7Patcher.h"
 #ifdef PICO_RTS_PROBE
 #include "patches/rts/RtsProbe.h"
+#ifdef PICO_RTS_SNAPSHOT
+#include "RtsM2Image.h"
+#include "RtsSnapshotInfo.h"
+extern RtsSnapshotInfo gRtsSnapshotInfo;
+#endif
 #endif
 
 static u32 correctAddress(u32 address, const nds_header_ntr_t* romHeader)
@@ -156,6 +161,19 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             patchCollection.AddPatch(new PokemonDownloaderArm7Patch());
         }
 
+#ifdef PICO_RTS_SNAPSHOT
+        void* snapshotWorkspace=nullptr;
+        u32 snapshotWorkspaceBytes=(RTS_M2_MEMORY_BYTES+511)&~511u;
+        u32 snapshotOriginal=(mainMemoryArenaLo+511)&~511u;
+        u32 snapshotCanonical=snapshotOriginal&~0x00c00000u;
+        if (!runInDSiMode && !cheatsLength && gRtsSnapshotInfo.magic==RTS_M2_MAGIC &&
+            snapshotCanonical>=0x02300000 && snapshotCanonical<0x023ff000 &&
+            snapshotWorkspaceBytes<=0x023ff000-snapshotCanonical)
+        {
+            snapshotWorkspace=(void*)snapshotCanonical;
+            mainMemoryArenaLo=snapshotOriginal+snapshotWorkspaceBytes;
+        }
+#endif
         arm7ArenaPatch->SetMainMemoryArenaLo((void*)mainMemoryArenaLo);
 
         // The arm7 patcher uses the fact that the ntr wram is mirrored over the entire 03 region.
@@ -182,7 +200,11 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             ErrorDisplay().PrintError("Failed to apply arm7 patches.");
         }
 #ifdef PICO_RTS_PROBE
+#ifdef PICO_RTS_SNAPSHOT
+        if (!runInDSiMode) InstallRtsProbeArm7(patchContext, cheatsLength,snapshotWorkspace,snapshotWorkspaceBytes);
+#else
         if (!runInDSiMode) InstallRtsProbeArm7(patchContext, cheatsLength);
+#endif
 #endif
         dc_flushAll();
         dc_drainWriteBuffer();

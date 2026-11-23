@@ -26,6 +26,11 @@ PLATFORM	?= DSPICO
 
 DEFINES		:= -DLIBTWL_ARM9 -DARM9 -DPICO_LOADER_TARGET_$(PLATFORM)
 
+ifeq ($(PICO_RTS_SNAPSHOT),1)
+DEFINES += -DPICO_RTS_PROBE -DPICO_RTS_SNAPSHOT
+INCLUDEDIRS += build/rts-worker
+endif
+
 ifeq ($(PICO_RTS_PROBE),1)
 DEFINES += -DPICO_RTS_PROBE
 endif
@@ -40,7 +45,7 @@ LIBDIRS		:= $(BLOCKSDS)/libs/libnds \
 # Build artifacts
 # ---------------
 
-NAME		:= picoLoader9_$(PLATFORM)$(if $(filter 1,$(PICO_RTS_PROBE)),_rts_probe)
+NAME		:= picoLoader9_$(PLATFORM)$(if $(filter 1,$(PICO_RTS_SNAPSHOT)),_snapshot_m2,$(if $(filter 1,$(PICO_RTS_PROBE)),_rts_probe))
 BUILDDIR	:= build/$(NAME)
 BIN     := $(NAME).bin
 ELF		:= build/$(NAME).elf

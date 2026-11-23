@@ -4,6 +4,10 @@ This is an altered research build of Pico Loader, **not an LNH-team release**.
 It does **not** implement save states. There is no state file format, memory
 snapshot, restore operation, or additional SD-card I/O in this diagnostic.
 
+The current hotkey is L+R+Down+A (user request, 2026-11-23). The first hardware
+report below used the earlier Select combination; the key change is covered by
+instruction tests and still awaits its own hardware round.
+
 ## First hardware target
 
 - DSPico, user's current 3DS using the 4.1.4/MSET setup, normal DS cartridge launch.
@@ -40,7 +44,7 @@ scratch buffer, because game code may already occupy that address at this stage.
 The existing SDK ARM7 VBlank epilogue is hooked using the ABI already used by
 Pico Loader's cheat engine; simultaneous cheats are therefore refused.
 
-1. Hold L+R+Down+Select for 30 ARM7 VBlanks. Both IPCSYNC nibbles and ROMCTRL
+1. Hold L+R+Down+A for 30 ARM7 VBlanks. Both IPCSYNC nibbles and ROMCTRL
    must be idle. ARM7 publishes nibble B, then returns to the game.
 2. At a patched BIOS/CP15 wait, ARM9 checks SYSTEM mode, CPU IRQ enabled,
    IME enabled, idle cartridge, ARM7 request B and its own idle nibble.

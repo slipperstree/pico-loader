@@ -8,10 +8,12 @@ sys.path.insert(0, str(Path(__file__).parent / 'pydeps'))
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
 
-root = Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parents[1]
+args = [arg for arg in sys.argv[1:] if arg != '--m2']
+root = Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain = os.environ.get('WONDERFUL_TOOLCHAIN', 'C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix = os.environ.get('ARM_NONE_EABI_PREFIX', str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
-elf = root/'build/picoLoader9_DSPICO_rts_probe.elf'
+M2 = '--m2' in sys.argv
+elf = root/('build/picoLoader9_DSPICO_snapshot_m2.elf' if M2 else 'build/picoLoader9_DSPICO_rts_probe.elf')
 syms = {}
 for line in subprocess.check_output([prefix+'nm', str(elf)], text=True).splitlines():
     p = line.split()
@@ -48,6 +50,10 @@ for block, literal, symbol in [
     ('resume','rts9_resume_return','rts9_return')]:
     patch(block,literal,addresses[symbol])
 patch('gate','rts9_enabled',1)
+HOTKEY=struct.unpack_from('<I',blobs['arm7'],addresses['rts7_hotkey']-bases['arm7'])[0]
+assert HOTKEY==0x381, 'User requested L+R+Down+A'
+WORKER=0x02020000
+if M2:patch('dim','rts9_m2_entry',WORKER)
 
 REGS = [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
         UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,
@@ -64,6 +70,9 @@ class Bus:
         self.keys = 0x3ff
         self.card_busy = False
         self.dimmed = False
+        self.frames=0
+        self.worker_ticks=0
+        self.snapshots=0
 
 class CPU:
     def __init__(self, bus, side, mode=0x1f, thumb=False):
@@ -74,6 +83,7 @@ class CPU:
         self.u.mem_map(0x04000000,0x2000)
         for name, blob in blobs.items():
             self.u.mem_write(bases[name], bytes(blob))
+        self.u.mem_write(WORKER,b'\x1e\xff\x2f\xe1')
         self.u.mem_write(DONE,b'\x70\x47')
         self.initial_cpsr = 0xa0000000|mode
         self.u.reg_write(UC_ARM_REG_CPSR,self.initial_cpsr)
@@ -87,6 +97,7 @@ class CPU:
         self.write(SUBBRIGHT,0x8002,2)
         self.done=False
         self.thumb=thumb
+        self.fault=False
         self.u.hook_add(UC_HOOK_CODE,self.code)
         self.u.hook_add(UC_HOOK_MEM_READ,self.read_mmio)
         self.u.hook_add(UC_HOOK_MEM_WRITE,self.write_mmio)
@@ -94,6 +105,20 @@ class CPU:
     def write(self,addr,value,size=4): self.u.mem_write(addr,int(value).to_bytes(size,'little'))
     def read(self,addr,size=4): return int.from_bytes(self.u.mem_read(addr,size),'little')
     def code(self,u,addr,size,data):
+        if M2 and addr==addresses['rts7_m2_fault']:
+            self.fault=True;u.emu_stop();return
+        if M2 and self.side==0 and addr==WORKER:
+            assert self.bus.out[1]==12 or self.bus.worker_ticks>600
+            self.bus.worker_ticks+=1
+            if self.bus.worker_ticks<=600:
+                self.bus.out[0]=9 if self.bus.worker_ticks%2 else 10
+                u.emu_stop();return
+            if self.bus.worker_ticks==601:
+                assert self.bus.frames>180, self.bus.frames
+                assert self.bus.out[1]==12
+                self.bus.out[0]=13;self.bus.events.append((0,13));self.bus.snapshots+=1
+            if self.bus.out[1]==12:u.emu_stop();return
+            u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR));return
         if addr == DONE:
             self.done=True
             u.emu_stop()
@@ -105,7 +130,9 @@ class CPU:
         elif addr==0x040001a4:
             self.write(addr,0x80000000 if self.bus.card_busy else 0)
         elif addr==0x04000006:
+            previous=self.bus.vcount
             self.bus.vcount=(self.bus.vcount+17)%263
+            if self.bus.vcount<previous:self.bus.frames+=1
             self.write(addr,self.bus.vcount,2)
     def write_mmio(self,u,access,addr,size,value,data):
         if addr==IPC:
@@ -188,7 +215,7 @@ patch('park','rts9_ready_budget',0x04000000)
 for thumb in (False,True):
     bus=Bus();cpu=CPU(bus,1,thumb=thumb);call7(cpu)
     assert not bus.events
-    bus.keys=0x3ff^0x384
+    bus.keys=0x3ff^HOTKEY
     for _ in range(29):call7(cpu)
     assert not bus.events
     call7(cpu)
@@ -198,12 +225,12 @@ for thumb in (False,True):
     for _ in range(40):call7(cpu)
     assert len(bus.events)==2, 'Held keys retriggered without a release'
     bus.keys=0x3ff;call7(cpu)
-    bus.keys=0x3ff^0x384
+    bus.keys=0x3ff^HOTKEY
     for _ in range(30):call7(cpu)
     assert bus.out==[0,11]
     print('PASS ARM7',('Thumb' if thumb else 'ARM'),'epilogue, hold, withdrawal, rearm')
 
-bus=Bus();bus.keys=0x3ff^0x384
+bus=Bus();bus.keys=0x3ff^HOTKEY
 c7=CPU(bus,1);c9=CPU(bus,0)
 for _ in range(30):call7(c7)
 c9.start()
@@ -218,11 +245,13 @@ for _ in range(3000):
 assert c7.done and c9.done
 c7.check();c9.check()
 assert bus.dimmed and bus.out==[0,0],bus.events
-assert bus.events==[(1,11),(0,10),(1,12),(1,0),(0,0)],bus.events
+expected=[(1,11),(0,10),(1,12)]+([(0,13)] if M2 else [])+[(1,0),(0,0)]
+assert bus.events==expected,bus.events
 print('PASS two-CPU request/ACK/park/release with restored CPU state and brightness')
 for round_id in range(2):
+    bus.worker_ticks=0;bus.frames=0
     bus.keys=0x3ff;call7(c7)
-    bus.keys=0x3ff^0x384
+    bus.keys=0x3ff^HOTKEY
     for _ in range(30):call7(c7)
     c9.start()
     for _ in range(10):
@@ -235,24 +264,26 @@ for round_id in range(2):
     assert c7.done and c9.done
     c7.check();c9.check()
     assert bus.out==[0,0]
-    assert bus.events[-5:]==[(1,11),(0,10),(1,12),(1,0),(0,0)]
+    assert bus.events[-len(expected):]==expected
 print('PASS three consecutive two-CPU rendezvous cycles')
 
-patch('dim','rts9_hold_budget',16)
-bus=Bus();bus.out[1]=12
-c9=CPU(bus,0)
-# Enter through the normal request path, then simulate ARM7 wedged after C.
-bus.out[1]=11;c9.start()
-for _ in range(10):
-    c9.step()
-    if bus.out[0]==10:break
-bus.out[1]=12;c9.run();c9.check()
-assert bus.out[0]==0 and bus.dimmed
-print('PASS ARM9 parked-peer watchdog restores brightness and interrupts')
-patch('dim','rts9_hold_budget',0x04000000)
+if not M2:
+    patch('dim','rts9_hold_budget',16)
+    bus=Bus();bus.out[1]=12
+    c9=CPU(bus,0)
+    # Enter through the normal request path, then simulate ARM7 wedged after C.
+    bus.out[1]=11;c9.start()
+    for _ in range(10):
+        c9.step()
+        if bus.out[0]==10:break
+    bus.out[1]=12;c9.run();c9.check()
+    assert bus.out[0]==0 and bus.dimmed
+    print('PASS ARM9 parked-peer watchdog restores brightness and interrupts')
+    patch('dim','rts9_hold_budget',0x04000000)
+
 
 for mode in (0x1f,0x12):
-    bus=Bus();bus.keys=0x3ff^0x384
+    bus=Bus();bus.keys=0x3ff^HOTKEY
     c7=CPU(bus,1,mode=mode)
     for _ in range(30):call7(c7)
     bus.out[0]=10;c7.start()
@@ -266,10 +297,34 @@ for mode in (0x1f,0x12):
     print('PASS ARM7 peer disappeared, original CPU mode restored:',hex(mode))
 
 for out,busy in [(7,False),(0,True)]:
-    bus=Bus();bus.keys=0x3ff^0x384;bus.out[0]=out;bus.card_busy=busy
+    bus=Bus();bus.keys=0x3ff^HOTKEY;bus.out[0]=out;bus.card_busy=busy
     c7=CPU(bus,1)
     for _ in range(40):call7(c7)
     assert bus.out==[out,0] and not bus.events
 print('PASS ARM7 rejects busy cartridge and non-idle game IPCSYNC')
 print('PASS section sizes:', {name:len(blob) for name,blob in blobs.items()})
 print('Hardware, Nintendo SDK dispatch, caches, DMA, timers and sound are NOT simulated.')
+
+bus=Bus();bus.keys=0x3ff^0x384
+cpu=CPU(bus,1)
+for _ in range(40):call7(cpu)
+assert not bus.events
+print('PASS old L+R+Down+Select combination does not trigger')
+if M2:
+    for guard in (0x040000b8,0x04000508):
+        bus=Bus();bus.keys=0x3ff^HOTKEY;cpu=CPU(bus,1)
+        for _ in range(30):call7(cpu)
+        bus.out[0]=10
+        cpu.write(guard,0x80000000 if guard==0x040000b8 else 0x80)
+        call7(cpu)
+        assert bus.out[1]==0
+    print('PASS ARM7 DMA/sound-capture prechecks withdraw request without parking')
+    patch('arm7','rts7_spin_budget',16)
+    bus=Bus();bus.keys=0x3ff^HOTKEY;cpu=CPU(bus,1)
+    for _ in range(30):call7(cpu)
+    bus.out[0]=10;cpu.start()
+    for _ in range(20):
+        cpu.step()
+        if cpu.fault:break
+    assert cpu.fault and not cpu.done and cpu.read(IME)==0 and bus.out[1]==12
+    print('PASS lost snapshot heartbeat holds ARM7 instead of resuming an unknown card transaction')

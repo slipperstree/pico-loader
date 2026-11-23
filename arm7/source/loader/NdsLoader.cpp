@@ -29,6 +29,11 @@
 #include "PatchListFactory.h"
 #include "CheatPreprocessor.h"
 #include "NdsLoader.h"
+#ifdef PICO_RTS_SNAPSHOT
+#include "RtsSnapshotPrepare.h"
+#include <span>
+static RtsSnapshotInfo sRtsSnapshotInfo;
+#endif
 
 #define AP_LIST_PATH      "/_pico/aplist.bin"
 #define PATCH_LIST_PATH   "/_pico/patchlist.bin"
@@ -193,6 +198,12 @@ void NdsLoader::Load(BootMode bootMode)
         isCloneBootRom = bootMode != BootMode::Multiboot && IsCloneBootRom(romOffset);
     }
 
+#ifdef PICO_RTS_SNAPSHOT
+    memset(&sRtsSnapshotInfo,0,sizeof(sRtsSnapshotInfo));
+    if (!isHomebrew && !_runInDSiMode && _romHeader.gameCode==RTS_M2_GAME &&
+        bootMode!=BootMode::Multiboot && gLoaderHeader.bootDrive==PLOAD_BOOT_DRIVE_DLDI)
+        PrepareRtsSnapshotFile(sRtsSnapshotInfo);
+#endif
     sendToArm9(IPC_COMMAND_ARM9_SET_ROM_FILE_INFO);
     sendToArm9(isHomebrew ? 0 : _romFile.dir_sect);
     sendToArm9(isHomebrew ? 0 : (u32)(_romFile.dir_ptr - _romFile.obj.fs->win));
@@ -566,6 +577,9 @@ void NdsLoader::ApplyArm7Patches()
 {
     sendToArm9(IPC_COMMAND_ARM9_APPLY_ARM7_PATCHES);
     sendToArm9(_cheats ? _cheats->length : 0);
+#ifdef PICO_RTS_SNAPSHOT
+    for (u32 value : std::span((const u32*)&sRtsSnapshotInfo,sizeof(sRtsSnapshotInfo)/4)) sendToArm9(value);
+#endif
     PreprocessCheats();
     void* patchSpaceStart = (void*)receiveFromArm9();
     void* cheatsPtr = (void*)receiveFromArm9();

@@ -8,6 +8,16 @@
 #include "gameCode.h"
 #include "thumbInstructions.h"
 #include "RtsProbe.h"
+#ifdef PICO_RTS_SNAPSHOT
+#ifndef PICO_LOADER_TARGET_DSPICO
+#error M2 snapshot is DSPico only
+#endif
+#include "RtsSnapshotInfo.h"
+#include "RtsM2Image.h"
+extern RtsSnapshotInfo gRtsSnapshotInfo;
+extern "C" u32 rts9_m2_entry;
+static u32* sM2EntryAtTarget;
+#endif
 
 DEFINE_SECTION_SYMBOLS(patch_rts9_gate);
 DEFINE_SECTION_SYMBOLS(patch_rts9_guard);
@@ -41,6 +51,9 @@ static u32 relocated(const void* symbol, const void* original, const void* targe
 void InstallRtsProbeArm9(PatchContext& context, const nds_header_ntr_t* header, u32 imageBytes)
 {
     sEnabledAtTarget = nullptr;
+#ifdef PICO_RTS_SNAPSHOT
+    sM2EntryAtTarget = nullptr;
+#endif
     sWaitHooks = 0;
     // First hardware target only: the user's AA2 Japanese/CJK ROM (A2GJ).
     if (header->gameCode != GAMECODE("A2GJ") || header->unitCode != 0 ||
@@ -122,16 +135,37 @@ void InstallRtsProbeArm9(PatchContext& context, const nds_header_ntr_t* header, 
         words[i] = 0xea000000 | ((delta >> 2) & 0xffffff);
         ++sWaitHooks;
     }
+#ifdef PICO_RTS_SNAPSHOT
+    sM2EntryAtTarget=(u32*)relocated(&rts9_m2_entry,originals[3],targets[3]);
+#endif
     if (sWaitHooks)
         sEnabledAtTarget = (u32*)relocated(&rts9_enabled, originals[0], targets[0]);
 }
 
-void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength)
+void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspace, u32 workspaceBytes)
 {
     if (!sEnabledAtTarget || cheatsLength) {
         rtsProbeMessage("RTS probe unavailable.\nTarget: A2GJ / SDK 3.1.\nDisable cheats for testing.\nNo save-state support.");
         return;
     }
+#ifdef PICO_RTS_SNAPSHOT
+    if (!workspace || workspaceBytes<RTS_M2_MEMORY_BYTES || gRtsSnapshotInfo.magic!=RTS_M2_MAGIC || !sM2EntryAtTarget)
+    {
+        rtsProbeMessage("M2 snapshot unavailable.\nCheck free TF space and\nRTS-A2GJ-M2.bin format.\nNo memory capture active.");
+        return;
+    }
+    memset(workspace,0,workspaceBytes);
+    memcpy(workspace,RTS_M2_IMAGE,sizeof(RTS_M2_IMAGE));
+    u32 delta=(u32)workspace-RTS_M2_LINK_BASE;
+    for (u32 offset:RTS_M2_RELOCS) *(u32*)((u8*)workspace+offset)+=delta;
+    auto config=(u8*)workspace+RTS_M2_CONFIG_OFFSET;
+    memcpy(config,&gRtsSnapshotInfo,sizeof(gRtsSnapshotInfo));
+    ((u32*)(config+sizeof(gRtsSnapshotInfo)))[0]=(u32)workspace;
+    ((u32*)(config+sizeof(gRtsSnapshotInfo)))[1]=workspaceBytes;
+    *sM2EntryAtTarget=(u32)workspace+RTS_M2_ENTRY_OFFSET;
+#else
+    (void)workspace; (void)workspaceBytes;
+#endif
     // Known target's VBlank epilogue. Verify the displaced instructions, too.
     const u32 pattern[] = { 0xe92d4000, 0xe24dd004, 0xe59f003c, 0xe5902060 };
     u32* handler = context.FindPattern32(pattern, sizeof(pattern));
@@ -150,6 +184,10 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength)
     epilogue[1] = relocated((void*)rts7_arm, SECTION_START(patch_rts7), target);
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
-    rtsProbeMessage("RTS research: CPU probe M1\nNOT save/load states yet.\nHold L+R+Down+Select.\nDim/pause about 3 seconds,\nthen continue automatically.");
+#ifdef PICO_RTS_SNAPSHOT
+    rtsProbeMessage("RTS research: snapshot M2\nCapture only, NO load yet.\nHold L+R+Down+A.\nWrites RTS-A2GJ-M2.bin.\nWait until screens recover.");
+#else
+    rtsProbeMessage("RTS research: CPU probe M1\nNOT save/load states yet.\nHold L+R+Down+A.\nDim/pause about 3 seconds,\nthen continue automatically.");
+#endif
 }
 #endif

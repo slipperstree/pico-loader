@@ -4,10 +4,12 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent/'pydeps'))
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
-root=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parents[1]
+M2='--m2' in sys.argv
+args=[arg for arg in sys.argv[1:] if arg!='--m2']
+root=Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain=os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
-elf=root/'build/picoLoader9_DSPICO_rts_probe.elf'
+elf=root/('build/picoLoader9_DSPICO_snapshot_m2.elf' if M2 else 'build/picoLoader9_DSPICO_rts_probe.elf')
 data=elf.read_bytes()
 symbols={}
 for line in subprocess.check_output([prefix+'nm',str(elf)],text=True).splitlines():

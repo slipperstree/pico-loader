@@ -1,4 +1,4 @@
-.PHONY: loader9 loader7 clean
+.PHONY: loader9 loader7 clean rtsWorker
 
 all: checklibtwl loader9 loader7 apList saveList patchList
 
@@ -6,6 +6,13 @@ PICO_PLATFORM ?= DSPICO
 
 checklibtwl:
 	$(MAKE) -C libs/libtwl
+
+ifeq ($(PICO_RTS_SNAPSHOT),1)
+loader9: rtsWorker
+endif
+
+rtsWorker:
+	$(MAKE) -f Makefile.rts-worker
 
 loader9: checklibtwl
 	$(MAKE) -f Makefile.arm9 PLATFORM=$(PICO_PLATFORM)

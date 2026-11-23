@@ -96,6 +96,11 @@ rts9_dim:
     orr r1, r1, #8
     strh r1, [r0]
     strh r1, [r2]            // Dim only after ARM7 also reports parked.
+#ifdef PICO_RTS_SNAPSHOT
+    ldr r3, rts9_m2_entry
+    blx r3
+    b 5f
+#else
     ldr r0, 3f
     ldr r12, rts9_hold_budget
 4:  ldrh r1, [r0]
@@ -104,6 +109,7 @@ rts9_dim:
     bne 5f
     subs r12, r12, #1
     bne 4b
+#endif
 5:  ldmia sp!, {r1, r3}
     ldr r0, 1f
     strh r1, [r0]
@@ -115,6 +121,10 @@ rts9_dim:
 3:  .word 0x04000180
 rts9_dim_resume: .word 0
 rts9_hold_budget: .word 0x04000000
+#ifdef PICO_RTS_SNAPSHOT
+.global rts9_m2_entry
+rts9_m2_entry: .word 0
+#endif
 
 .section patch_rts9_resume, "ax"
 .global rts9_resume, rts9_resume_return

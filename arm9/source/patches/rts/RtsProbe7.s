@@ -85,6 +85,21 @@ rts7_rearm:
     str r1, [r0]
     b rts7_done
 rts7_park:
+#ifdef PICO_RTS_SNAPSHOT
+    // Reject DMA and sound capture before granting a memory snapshot.
+    ldr r0, rts7_dma_control
+    mov r3, #4
+91: ldr r2, [r0], #12
+    tst r2, #0x80000000
+    bne rts7_m2_decline
+    subs r3, r3, #1
+    bne 91b
+    ldr r0, rts7_capture_control
+    ldrh r2, [r0]
+    ldr r3, rts7_capture_mask
+    tst r2, r3
+    bne rts7_m2_decline
+#endif
     // ARM9 is parked. Do not call BIOS/SDK/file I/O from this critical section.
     mov r3, #0
     str r3, [r4]
@@ -103,20 +118,41 @@ rts7_park:
     ldrh r6, [r0]
     ldr r7, rts7_frames
     ldr r5, rts7_spin_budget
+#ifdef PICO_RTS_SNAPSHOT
+    mov r11, #10
+#endif
 rts7_frame_loop:
     ldrh r3, [r0]
     cmp r3, r6
     mov r6, r3
     sublo r7, r7, #1        // Physical scanline wrap, independent of game timers.
+#ifndef PICO_RTS_SNAPSHOT
     cmp r7, #0
     beq rts7_release
+#endif
     ldr r1, rts7_ipc
     ldrh r2, [r1]
     and r2, r2, #15
+#ifdef PICO_RTS_SNAPSHOT
+    cmp r2, #14
+    beq rts7_m2_fault
+    cmp r2, #10
+    beq 92f
+    cmp r2, #9
+    bne rts7_release
+92: cmp r2, r11
+    ldrne r5, rts7_spin_budget
+    mov r11, r2
+#else
     cmp r2, #10
     bne rts7_release
+#endif
     subs r5, r5, #1
     bne rts7_frame_loop
+#ifdef PICO_RTS_SNAPSHOT
+    // No heartbeat while card I/O may be active: fail closed, do not resume.
+    b rts7_m2_fault
+#endif
 rts7_release:
     ldr r0, rts7_ipc
     strh r10, [r0]
@@ -128,6 +164,17 @@ rts7_wait_release:
     bne rts7_restore
     subs r5, r5, #1
     bne rts7_wait_release
+    b rts7_restore
+#ifdef PICO_RTS_SNAPSHOT
+rts7_m2_decline:
+    ldr r0,rts7_ipc
+    ldrh r1,[r0]
+    bic r1,r1,#0xf00
+    strh r1,[r0]
+    b rts7_cancel_state
+rts7_m2_fault:
+    b rts7_m2_fault
+#endif
 rts7_restore:
     ldr r0, rts7_ime
     str r9, [r0]
@@ -141,11 +188,16 @@ rts7_ipc: .word 0x04000180
 rts7_card: .word 0x040001a4
 rts7_ime: .word 0x04000208
 rts7_vcount: .word 0x04000006
-rts7_hotkey: .word 0x384
+rts7_hotkey: .word 0x381
 rts7_nibble_mask: .word 0xf0f
 rts7_hold_count: .word 0
 rts7_fired: .word 0
 rts7_pending: .word 0
 rts7_frames: .word 180
 rts7_spin_budget: .word 0x04000000
+#ifdef PICO_RTS_SNAPSHOT
+rts7_dma_control: .word 0x040000b8
+rts7_capture_control: .word 0x04000508
+rts7_capture_mask: .word 0x00008080
+#endif
 #endif

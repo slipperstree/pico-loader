@@ -22,6 +22,10 @@ BINDIRS		:=
 
 DEFINES		:= -DLIBTWL_ARM7 -DARM7
 
+ifeq ($(PICO_RTS_SNAPSHOT),1)
+DEFINES += -DPICO_RTS_SNAPSHOT
+endif
+
 # Libraries
 # ---------
 
@@ -32,7 +36,7 @@ LIBDIRS		:= $(BLOCKSDS)/libs/libnds \
 # Build artifacts
 # -----------------
 
-NAME		:= picoLoader7
+NAME		:= picoLoader7$(if $(filter 1,$(PICO_RTS_SNAPSHOT)),_snapshot_m2)
 BUILDDIR	:= build/$(NAME)
 BIN     := $(NAME).bin
 ELF		:= build/$(NAME).elf

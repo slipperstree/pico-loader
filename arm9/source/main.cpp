@@ -21,6 +21,10 @@
 #include "Arm9IoRegisterClearer.h"
 #include "Arm9Patcher.h"
 #include "Arm7Patcher.h"
+#ifdef PICO_RTS_SNAPSHOT
+#include "RtsSnapshotInfo.h"
+RtsSnapshotInfo gRtsSnapshotInfo;
+#endif
 #include "patches/platform/LoaderPlatform.h"
 #include "patches/platform/LoaderPlatformFactory.h"
 #include "arm9Clock.h"
@@ -161,6 +165,9 @@ static void handleApplyArm9PatchesCommand()
 
 static void handleApplyArm7PatchesCommand(u32 cheatsLength)
 {
+#ifdef PICO_RTS_SNAPSHOT
+    for (u32 i=0;i<sizeof(gRtsSnapshotInfo)/4;++i) ((u32*)&gRtsSnapshotInfo)[i]=receiveFromArm7();
+#endif
     void* cheats = nullptr;
     char* bannerSavePath = nullptr;
     void* patchSpaceStart = Arm7Patcher().ApplyPatches(sLoaderPlatform, cheatsLength, cheats, bannerSavePath, sRunInDSiMode);
