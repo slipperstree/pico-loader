@@ -14,10 +14,12 @@
 #error M2 snapshot is DSPico only
 #endif
 #include "RtsSnapshotInfo.h"
+#include "patches/platform/dspico/DSPicoReadSdSectorsPatchCode.h"
+#include "patches/platform/dspico/DSPicoWriteSdSectorsPatchCode.h"
 #include "RtsM2Image.h"
 extern RtsSnapshotInfo gRtsSnapshotInfo;
 extern "C" u32 rts9_m2_entry;
-extern "C" u32 rts7_diagnostic_address;
+extern "C" u32 rts7_diagnostic_address, rts7_read_busy_address, rts7_write_busy_address;
 static u32* sM2EntryAtTarget;
 #endif
 
@@ -156,6 +158,12 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
         rtsProbeMessage("M2 snapshot unavailable.\nCheck free TF space and\nRTS-A2GJ-M2.bin format.\nNo memory capture active.");
         return;
     }
+    u32 readBusy=DSPicoReadSdSectorsPatchCode::busyAddress;
+    u32 writeBusy=DSPicoWriteSdSectorsPatchCode::busyAddress;
+    if(readBusy<0x03800000 || readBusy>=0x03810000 || writeBusy<0x03800000 || writeBusy>=0x03810000)
+    {
+        rtsProbeMessage("M2 disabled: SD guards\nwere not installed.");return;
+    }
     memset(workspace,0,workspaceBytes);
     memcpy(workspace,RTS_M2_IMAGE,sizeof(RTS_M2_IMAGE));
     u32 delta=(u32)workspace-RTS_M2_LINK_BASE;
@@ -185,13 +193,15 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
 #ifdef PICO_RTS_SNAPSHOT
     *(u32*)relocated(&rts7_diagnostic_address,SECTION_START(patch_rts7),target)=
         (u32)workspace+RTS_M2_CONFIG_OFFSET+offsetof(RtsSnapshotInfo,reserved);
+    *(u32*)relocated(&rts7_read_busy_address,SECTION_START(patch_rts7),target)=readBusy;
+    *(u32*)relocated(&rts7_write_busy_address,SECTION_START(patch_rts7),target)=writeBusy;
 #endif
     // No target becomes active until both code blocks have been copied.
     epilogue[1] = relocated((void*)rts7_arm, SECTION_START(patch_rts7), target);
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_SNAPSHOT
-    rtsProbeMessage("RTS research: snapshot M2.3\nCapture only, NO load yet.\nHold L+R+Down+A.\nWrites RTS-A2GJ-M2.bin.\nOn S8, read code, press B.");
+    rtsProbeMessage("RTS research: snapshot M2.4\nCapture only, NO load yet.\nHold L+R+Down+A.\nWrites RTS-A2GJ-M2.bin.\nOn S8, read code, press B.");
 #else
     rtsProbeMessage("RTS research: CPU probe M1\nNOT save/load states yet.\nHold L+R+Down+A.\nDim/pause about 3 seconds,\nthen continue automatically.");
 #endif

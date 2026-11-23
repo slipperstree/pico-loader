@@ -88,6 +88,29 @@ rts7_park:
     ldr r0,rts7_diagnostic_address
     mov r2,#0
     str r2,[r0]
+    ldr r0,rts7_read_busy_address
+    ldr r2,[r0]
+    ldr r0,rts7_write_busy_address
+    ldr r3,[r0]
+    orrs r2,r2,r3
+    movne r2,#4096
+    bne rts7_m2_report_refusal
+    // Check the owning CPU's card registers, not ARM9's inactive interface.
+    ldr r0,rts7_exmem
+    ldrh r2,[r0]
+    tst r2,#0x800
+    beq rts7_m2_dma_check
+    ldr r0,rts7_card
+    ldr r2,[r0]
+    tst r2,#0x80000000
+    movne r2,#4
+    bne rts7_m2_report_refusal
+    ldr r0,rts7_spi
+    ldrh r2,[r0]
+    tst r2,#0x80
+    movne r2,#8
+    bne rts7_m2_report_refusal
+rts7_m2_dma_check:
     // Reject DMA and sound capture before granting a memory snapshot.
     ldr r0, rts7_dma_control
     mov r3, #4
@@ -213,5 +236,10 @@ rts7_capture_control: .word 0x04000508
 rts7_capture_mask: .word 0x00008080
 .global rts7_diagnostic_address
 rts7_diagnostic_address: .word 0
+.global rts7_read_busy_address, rts7_write_busy_address
+rts7_read_busy_address: .word 0
+rts7_write_busy_address: .word 0
+rts7_exmem: .word 0x04000204
+rts7_spi: .word 0x040001a0
 #endif
 #endif

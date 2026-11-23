@@ -291,7 +291,7 @@ void rtsM2Run(const u32* entryRegs)
     u32 reason=asynchronousBusy();
     if((control&0x50000)!=0x50000 || (dtcm&0x3f)!=10 || itcm!=0x20 ||
        (dtcm&~0xfffu)<0x02400000 || (dtcm&~0xfffu)>0x02ffc000)reason|=1;
-    if(REG16(0x04000204)&0x800)reason|=2;
+    u16 oldExmem=REG16(0x04000204);
     // ARM7 publishes into an otherwise read-only cache line. Invalidate only
     // that line before reading the shared diagnostic word; never clean stale data.
     u32 shared=(u32)&s->info.reserved;
@@ -305,6 +305,17 @@ void rtsM2Run(const u32* entryRegs)
         showRefusal(reason);
         signalDone();return; // Never issue SD commands after a refusal.
     }
+    // ARM7 published C only after its whole SD transaction and hardware guards.
+    // Both CPUs stay parked. Borrow Slot-1 only, preserving all other EXMEM bits.
+    if(oldExmem&0x800)
+    {
+        REG16(0x04000204)=oldExmem&~0x800u;
+        if(REG16(0x04000204)&0x800)
+        {
+            REG16(0x04000204)=oldExmem;
+            showRefusal(2);signalDone();return;
+        }
+    }
     progressOpen();
     progress(1,0);
     clear(h,sizeof(*h));
@@ -316,6 +327,7 @@ void rtsM2Run(const u32* entryRegs)
     for(u32 i=4;i<12;++i)h->regs[i]=entryRegs[i];
     h->regs[12]=frame[10];h->regs[13]=(u32)(frame+12);h->regs[14]=frame[11];h->regs[15]=entryRegs[13];
     h->reserved[0]=entryRegs[12]; // Original protected MPU region 2.
+    h->reserved[1]=oldExmem; // Original Slot-1 ownership and wait settings.
     h->gateCpsr=frame[4];h->frameAddress=(u32)frame;h->flags=1; // explicitly NOT restorable
     progress(2,0);
     flushCaches();
@@ -377,6 +389,8 @@ void rtsM2Run(const u32* entryRegs)
     u32 zero=0;
     __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(zero):"memory");
     __asm__ volatile("mcr p15,0,%0,c1,c0,0"::"r"(control):"memory");
+    REG16(0x04000204)=oldExmem;
+    if((REG16(0x04000204)^oldExmem)&0x800)fault(9);
     progressClose();
     signalDone();
 }

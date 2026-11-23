@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent/'rts/pydeps'))
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
-args=[a for a in sys.argv[1:] if a!='--zero-ready-only']
+args=[a for a in sys.argv[1:] if a not in ('--zero-ready-only','--restore-failure-only')]
 root=Path(args[0]) if args else Path(__file__).resolve().parents[1]
 toolchain=os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
@@ -29,7 +29,7 @@ REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
 EXTENTS=[(2048,0x1000),(4096,0x3000),(SECTORS-6144,0x6000)]
 ALLOWED=[first+i for count,first in EXTENTS for i in range(count)]
 
-def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False,held_b=False):
+def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False,held_b=False,bad_tcm=False,owner_stuck=False,restore_stuck=False):
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
     for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027c0000,0x4000),(0x06840000,0x20000),
                       (0x04000000,0x2000),(0x04100000,0x1000)]:u.mem_map(addr,size)
@@ -72,17 +72,18 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     u.reg_write(UC_ARM_REG_CPSR,0xdf)
     u.reg_write(UC_ARM_REG_SP,sp);u.reg_write(UC_ARM_REG_LR,done|1)
     for reg,value in zip(REGS,original_regs):u.reg_write(reg,value)
-    u.mem_write(0x04000204,struct.pack('<H',0x800 if owner7 else 0))
+    initial_exmem=0x8883 if owner7 else 0x8083
+    u.mem_write(0x04000204,struct.pack('<H',initial_exmem))
     u.mem_write(0x040001a0,struct.pack('<H',0x8000))
     if display_capture:u.mem_write(0x04000064,struct.pack('<I',0x80000000))
     if busy or settle_dma:u.mem_write(0x040000b8,struct.pack('<I',0x80000000))
     expected=bytearray(u.mem_read(0x02000000,0x400000))
     expected[base-0x02000000:base-0x02000000+workbytes]=b'\0'*workbytes
     state={'mode':'idle','word':0,'sector':0,'read_sector':0,'peer':12,'own':10,
-           'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[],'ack_reads':[],'heartbeats':0}
+           'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[],'ack_reads':[],'heartbeats':0,'exmem':initial_exmem,'exmem_writes':[]}
     if settle_dma and not foreign:raise AssertionError('Use foreign guard to test settling without a second full dump')
     control=0x0005707d
-    cp={(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0x20}
+    cp={(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0 if bad_tcm else 0x20}
     def coproc(uc,addr,size,data):
         ins=struct.unpack('<I',uc.mem_read(addr,4))[0]
         crn,crm,opc2,rd=(ins>>16)&15,ins&15,(ins>>5)&7,(ins>>12)&15
@@ -103,7 +104,9 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     fault=base+symbols['fault']-meta['link_base']
     u.hook_add(UC_HOOK_CODE,stopped,begin=fault,end=fault)
     def read(uc,access,addr,size,value,data):
-        if addr==0x04000130:
+        if addr==0x04000204:
+            uc.mem_write(addr,struct.pack('<H',state['exmem']))
+        elif addr==0x04000130:
             # Keep S8 visible for four physical seconds. Even a B already held
             # on entry must be released before a fresh press acknowledges it.
             pressed=(held_b and state['frames']<60) or state['frames']>=240
@@ -139,6 +142,10 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             current_sp=uc.reg_read(UC_ARM_REG_SP)
             if base<=current_sp<base+workbytes:assert stack_start<=current_sp<=stack_start+1024,('Worker stack escaped',hex(current_sp))
             assert stack_start<=addr and addr+size<=stack_start+1024 or cfg<=addr or base+symbols['ioBudget']-meta['link_base']<=addr<base+symbols['ioBudget']-meta['link_base']+4,('Worker code overwritten / stack overflow',hex(addr))
+        elif addr==0x04000204:
+            assert (value^initial_exmem)&~0x800==0, 'Other EXMEM bits changed'
+            state['exmem_writes'].append(value)
+            if not owner_stuck and not (restore_stuck and value&0x800 and state['commands']):state['exmem']=value
         elif addr in (0x0400006c,0x0400106c):
             state['brightness'].append((addr,value))
         elif addr==0x04000180:
@@ -147,6 +154,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             assert value&0x4000,'IPCSYNC IRQ control lost'
             if state['own']==13:state['peer']=0
         elif addr==0x040001a4 and value&0x80000000:
+            assert state['exmem']&0x800==0 and state['peer']==12, 'Card used without parked ARM7 and ARM9 ownership'
             cmd=bytes(uc.mem_read(0x040001a8,8));op=cmd[0]
             argument=int.from_bytes(cmd[4:],'big')
             state['commands']+=1
@@ -169,11 +177,14 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
                 if state['sector']==ALLOWED[0]:state['header_phases'].append(struct.unpack_from('<I',state['buffer'],16)[0])
     u.hook_add(UC_HOOK_MEM_WRITE,write,begin=0x02000000,end=0x04100013)
     u.emu_start(base+meta['entry_offset'],0,count=1500000000)
-    if badmap or busy or display_capture or arm7_reason or owner7:
+    if badmap or busy or display_capture or arm7_reason or bad_tcm or owner_stuck:
         assert state['done'] and not state['writes'] and not state['commands'],state
-        if owner7:assert (8,2) in state['stages']
+        if owner_stuck:assert (8,2) in state['stages']
+        if bad_tcm:assert (8,1) in state['stages']
+        if arm7_reason==4096:assert (8,4096) in state['stages'] and not state['exmem_writes']
+        assert state['exmem']==initial_exmem
         if badmap:assert (8,256) in state['stages']
-        if busy or display_capture or arm7_reason:
+        if busy or display_capture or (arm7_reason & (512|1024)):
             assert state['brightness'].count((0x0400006c,0x400c))==3
             assert state['brightness'].count((0x0400106c,0x400c))==3
             assert not state['stages'], 'Unsafe VRAM remap during DMA/capture refusal'
@@ -188,6 +199,10 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert struct.unpack('<H',u.mem_read(0x0400006c,2))[0]==0x8008
         assert [u.reg_read(reg) for reg in REGS]==original_regs
         assert u.reg_read(UC_ARM_REG_SP)==sp
+    elif restore_stuck:
+        assert state['fault']==9 and not state['done'] and state['peer']==12
+        assert state['exmem']&0x800==0
+        assert struct.unpack('<I',u.mem_read(0x04000000,4))[0]==0x000a0000, 'Error display closed before ownership restore'
     elif foreign or corrupt or timeout or zero_ready:
         assert state['fault']==(2 if foreign else 6 if corrupt else 1),state
         assert not state['done'] and 2 not in state['header_phases']
@@ -206,6 +221,8 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert header[33]==sp+48 and header[36]==frame[4] and header[38]==0x023e0021
         assert [u.reg_read(reg) for reg in REGS]==original_regs
         assert u.reg_read(UC_ARM_REG_SP)==sp and u.reg_read(UC_ARM_REG_LR)==done|1
+        assert state['exmem']==initial_exmem
+        assert header[39]==initial_exmem
         assert cp[(1,0,0)]==control and state['cache_ops']>=257
         assert bytes(u.mem_read(0x06840000,0x20000))==video, 'VRAM progress line not restored'
         assert struct.unpack('<I',u.mem_read(0x04000000,4))[0]==0x00110800
@@ -214,8 +231,12 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         (folder/'model-snapshot.bin').write_bytes(blob)
     print('PASS',label,'commands',state['commands'],'file-sector writes',len(state['writes']),flush=True)
 
+if '--restore-failure-only' in sys.argv:
+    run_case('ownership restoration failure holds CPUs with error display still open',owner7=True,restore_stuck=True)
+    raise SystemExit(0)
+
 if '--zero-ready-only' not in sys.argv:
-    run_case('complete 4 MiB + DTCM + ITCM capture and full readback CRC')
+    run_case('ARM7-owned card borrowed/restored, full capture and readback CRC',owner7=True)
     run_case('alternate relocation address',base=0x023e0000)
     run_case('invalid mapping refuses all SD commands',badmap=True)
     run_case('DMA precheck refuses all SD commands',busy=True)
@@ -227,7 +248,9 @@ run_case('continuous SD-not-ready response terminates within shared retry budget
 run_case('active display capture declines without SD access',display_capture=True)
 run_case('ARM7 DMA refusal never issues SD commands',arm7_reason=512)
 run_case('ARM7 sound capture refusal never issues SD commands',arm7_reason=1024)
-run_case('card owner refusal displays S8 reason',owner7=True)
+run_case('failed ownership change refuses without SD commands',owner7=True,owner_stuck=True)
 run_case('one-shot DMA settles before first SD command',settle_dma=True,foreign=True)
-run_case('S8 requires B release and a fresh press while heartbeating',owner7=True,held_b=True)
+run_case('S8 requires B release and a fresh press while heartbeating',bad_tcm=True,held_b=True)
 run_case('invalid map S8 waits for B without any SD command',badmap=True)
+
+run_case('whole ARM7 SD transaction busy refuses without borrowing card',arm7_reason=4096,owner7=True)

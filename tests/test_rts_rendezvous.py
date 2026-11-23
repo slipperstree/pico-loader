@@ -57,6 +57,8 @@ DIAGNOSTIC=WORKER+0x200
 if M2:
     patch('dim','rts9_m2_entry',WORKER)
     patch('arm7','rts7_diagnostic_address',DIAGNOSTIC)
+    patch('arm7','rts7_read_busy_address',DIAGNOSTIC+4)
+    patch('arm7','rts7_write_busy_address',DIAGNOSTIC+8)
 
 REGS = [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
         UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,
@@ -72,6 +74,7 @@ class Bus:
         self.vcount = 192
         self.keys = 0x3ff
         self.card_busy = False
+        self.card_busy7 = False
         self.dimmed = False
         self.frames=0
         self.worker_ticks=0
@@ -146,7 +149,7 @@ class CPU:
         elif addr==0x04000130:
             self.write(addr,self.bus.keys,2)
         elif addr==0x040001a4:
-            self.write(addr,0x80000000 if self.bus.card_busy else 0)
+            self.write(addr,0x80000000 if self.bus.card_busy or (self.side==1 and self.bus.card_busy7) else 0)
         elif addr==0x04000006:
             previous=self.bus.vcount
             self.bus.vcount=(self.bus.vcount+17)%263
@@ -332,14 +335,16 @@ for _ in range(40):call7(cpu)
 assert not bus.events
 print('PASS old L+R+Down+Select combination does not trigger')
 if M2:
-    for guard,reason in [(0x040000b8,512),(0x04000508,1024)]:
+    for guard,reason in [(0x040000b8,512),(0x04000508,1024),(DIAGNOSTIC+4,4096),(DIAGNOSTIC+8,4096),(0x040001a4,4),(0x040001a0,8)]:
         bus=Bus();bus.keys=0x3ff^HOTKEY;c7=CPU(bus,1);c9=CPU(bus,0)
         for _ in range(30):call7(c7)
         c9.start()
         for _ in range(10):
             c9.step()
             if bus.out[0]==10:break
-        c7.write(guard,0x80000000 if guard==0x040000b8 else 0x80)
+        c7.write(0x04000204,0x800,2)
+        if guard==0x040001a4:bus.card_busy7=True
+        c7.write(guard,0x80000000 if guard in (0x040000b8,0x040001a4) else 0x80)
         c7.start()
         for _ in range(100):
             c7.step();c9.step()

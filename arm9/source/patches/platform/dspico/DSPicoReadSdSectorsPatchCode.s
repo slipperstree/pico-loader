@@ -9,6 +9,23 @@
 .global dspico_readSdSectors
 .type dspico_readSdSectors, %function
 dspico_readSdSectors:
+#ifdef PICO_RTS_SNAPSHOT
+    // Cover the entire multi-command SD transaction, including idle gaps.
+    push {r4,lr}
+    adr r4,dspico_readsdsectors_busy
+    movs r3,#1
+    str r3,[r4]
+    bl dspico_readSdSectorsBody
+    movs r3,#0
+    str r3,[r4]
+    pop {r4,pc}
+.balign 4
+.global dspico_readsdsectors_busy
+dspico_readsdsectors_busy: .word 0
+.thumb_func
+.global dspico_readSdSectorsBody
+dspico_readSdSectorsBody:
+#endif
     push {r0,r1,r2,r4-r7,lr}
     pop {r4,r5,r6}
 

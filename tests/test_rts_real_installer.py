@@ -92,7 +92,12 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and 'snapshot M2.3' in state['warnings'][-1],state['warnings']
+assert state['warnings'] and 'snapshot M2.4' in state['warnings'][-1],state['warnings']
+for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
+    literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
+    assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
+    assert bytes(u.mem_read(literal,4))==b'\0'*4
+    report[symbol]=hex(literal)
 report.update({'arm7_hook':hex(hook),'worker':hex(worker),'diagnostic':hex(diagnostic),'enabled':enabled,'prompt':state['warnings'][-1]})
 print(json.dumps({k:v for k,v in report.items() if k not in ('allocations','requests')},indent=2))
 (root/'build/rts-worker/installer-report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
