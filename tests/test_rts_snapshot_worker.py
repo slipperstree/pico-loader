@@ -29,7 +29,7 @@ REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
 EXTENTS=[(2048,0x1000),(4096,0x3000),(SECTORS-6144,0x6000)]
 ALLOWED=[first+i for count,first in EXTENTS for i in range(count)]
 
-def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False):
+def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False,held_b=False):
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
     for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027c0000,0x4000),(0x06840000,0x20000),
                       (0x04000000,0x2000),(0x04100000,0x1000)]:u.mem_map(addr,size)
@@ -79,7 +79,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     expected=bytearray(u.mem_read(0x02000000,0x400000))
     expected[base-0x02000000:base-0x02000000+workbytes]=b'\0'*workbytes
     state={'mode':'idle','word':0,'sector':0,'read_sector':0,'peer':12,'own':10,
-           'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[]}
+           'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[],'ack_reads':[],'heartbeats':0}
     if settle_dma and not foreign:raise AssertionError('Use foreign guard to test settling without a second full dump')
     control=0x0005707d
     cp={(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0x20}
@@ -103,7 +103,13 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     fault=base+symbols['fault']-meta['link_base']
     u.hook_add(UC_HOOK_CODE,stopped,begin=fault,end=fault)
     def read(uc,access,addr,size,value,data):
-        if addr==0x04000006:
+        if addr==0x04000130:
+            # Keep S8 visible for four physical seconds. Even a B already held
+            # on entry must be released before a fresh press acknowledges it.
+            pressed=(held_b and state['frames']<60) or state['frames']>=240
+            state['ack_reads'].append((state['frames'],pressed))
+            uc.mem_write(addr,struct.pack('<H',0x3ff ^ (2 if pressed else 0)))
+        elif addr==0x04000006:
             previous=state['vcount'];state['vcount']=(previous+17)%263
             if state['vcount']<previous:state['frames']+=1
             uc.mem_write(addr,struct.pack('<H',state['vcount']))
@@ -136,6 +142,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         elif addr in (0x0400006c,0x0400106c):
             state['brightness'].append((addr,value))
         elif addr==0x04000180:
+            if ((value>>8)&15) in (9,10):state['heartbeats']+=1
             state['own']=(value>>8)&15
             assert value&0x4000,'IPCSYNC IRQ control lost'
             if state['own']==13:state['peer']=0
@@ -170,7 +177,11 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             assert state['brightness'].count((0x0400006c,0x400c))==3
             assert state['brightness'].count((0x0400106c,0x400c))==3
             assert not state['stages'], 'Unsafe VRAM remap during DMA/capture refusal'
-        else:assert state['frames']>=180, 'S8 feedback was not held long enough'
+        else:
+            assert state['frames']>=240, 'S8 exited without a fresh B acknowledgement'
+            assert state['ack_reads'][-1][1] and any(not pressed for _,pressed in state['ack_reads'])
+            assert state['heartbeats']>=240, 'ARM7 heartbeat lost during S8 wait'
+            if held_b:assert state['ack_reads'][0][1], 'B-held entry was not exercised'
         assert bytes(u.mem_read(0x06840000,0x20000))==video
         assert struct.unpack('<I',u.mem_read(0x04000000,4))[0]==0x00110800
         assert bytes(u.mem_read(0x04000242,1))==b'\x84'
@@ -218,3 +229,5 @@ run_case('ARM7 DMA refusal never issues SD commands',arm7_reason=512)
 run_case('ARM7 sound capture refusal never issues SD commands',arm7_reason=1024)
 run_case('card owner refusal displays S8 reason',owner7=True)
 run_case('one-shot DMA settles before first SD command',settle_dma=True,foreign=True)
+run_case('S8 requires B release and a fresh press while heartbeating',owner7=True,held_b=True)
+run_case('invalid map S8 waits for B without any SD command',badmap=True)

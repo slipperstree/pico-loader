@@ -17,7 +17,7 @@ typedef struct {
     RtsSnapshotInfo info;
     u32 base, bytes;
     RtsM2Header header;
-    u32 readback[128], zero[128];
+    u32 readback[128];
     u16 videoBackup[96*8];
     u32 oldDisplay;
     u16 oldBrightness;
@@ -50,6 +50,7 @@ static const u8 digits[10][5]={
 static u8 glyph(u32 c,u32 x)
 {
     if(c>='0' && c<='9')return digits[c-'0'][x];
+    if(c=='B'){const u8 a[5]={0x7f,0x49,0x49,0x49,0x36};return a[x];}
     if(c=='M'){const u8 a[5]={0x7f,2,12,2,0x7f};return a[x];}
     if(c=='S'){const u8 a[5]={0x46,0x49,0x49,0x49,0x31};return a[x];}
     if(c=='/'){const u8 a[5]={0x20,0x10,8,4,2};return a[x];}
@@ -74,6 +75,7 @@ static void progress(u32 stage,u32 value)
     u8 text[15]={'M','2',' ','S',(u8)('0'+stage),' ','0','0','0','0','/','8','2','8','8'};
     static const u16 place[4]={1000,100,10,1};
     for(u32 i=0;i<4;++i){u8 digit=0;while(value>=place[i]){value-=place[i];++digit;}text[6+i]='0'+digit;}
+    if(stage==8){text[10]=' ';text[11]='B';text[12]=' ';text[13]=' ';text[14]=' ';}
     volatile u16* fb=(volatile u16*)0x06840000;
     for(u32 y=0;y<8;++y)for(u32 x=0;x<96;++x)fb[y*256+x]=0x8000;
     for(u32 i=0;i<15;++i)for(u32 x=0;x<5;++x){u8 bits=glyph(text[i],x);for(u32 y=0;y<7;++y)if(bits&(1u<<y))fb[y*256+i*6+x]=0xffff;}
@@ -232,6 +234,21 @@ static void waitFrames(u32 frames)
         previous=current;
     }
 }
+// Require a fresh B press, so keys already held on entry cannot dismiss S8.
+// Both CPUs remain parked; keep the existing ARM7 watchdog alive while the
+// user reads the reason. This path never performs card I/O.
+static void waitRefusalAck(void)
+{
+    u32 tick=0;
+    int released=0;
+    for(;;)
+    {
+        heartbeat((tick++ & 1u)*16u);
+        if(REG16(0x04000130)&2u)released=1;
+        else if(released)return;
+        waitFrames(1);
+    }
+}
 static u32 asynchronousBusy(void)
 {
     u32 mask=REG32(0x04000064)&0x80000000 ? 2048 : 0;
@@ -256,7 +273,7 @@ static void showRefusal(u32 reason)
     }
     else
     {
-        progressOpen();progress(8,reason);waitFrames(180);progressClose();
+        progressOpen();progress(8,reason);waitRefusalAck();progressClose();
     }
 }
 
@@ -323,7 +340,14 @@ void rtsM2Run(const u32* entryRegs)
         if(index<0x400000/512)
         {
             u32 address=0x02000000+index*512;
-            src=(address>=s->base && address<s->base+s->bytes) ? s->zero : (const u32*)address;
+            if(address>=s->base && address<s->base+s->bytes)
+            {
+                // Header readback is no longer needed during payload writes.
+                // Reuse its sector buffer for workspace exclusion, retaining
+                // the existing 8 KiB reservation despite the diagnostic wait.
+                clear(s->readback,sizeof(s->readback));src=s->readback;
+            }
+            else src=(const u32*)address;
         }
         else if(index<(0x400000+0x4000)/512)src=(const u32*)(h->dtcmBase+(index-0x400000/512)*512);
         else src=(const u32*)(0x01ff8000+(index-(0x400000+0x4000)/512)*512);
