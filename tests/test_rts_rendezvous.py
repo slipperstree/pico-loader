@@ -53,7 +53,10 @@ patch('gate','rts9_enabled',1)
 HOTKEY=struct.unpack_from('<I',blobs['arm7'],addresses['rts7_hotkey']-bases['arm7'])[0]
 assert HOTKEY==0x381, 'User requested L+R+Down+A'
 WORKER=0x023fa000
-if M2:patch('dim','rts9_m2_entry',WORKER)
+DIAGNOSTIC=WORKER+0x200
+if M2:
+    patch('dim','rts9_m2_entry',WORKER)
+    patch('arm7','rts7_diagnostic_address',DIAGNOSTIC)
 
 REGS = [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
         UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,
@@ -73,6 +76,8 @@ class Bus:
         self.frames=0
         self.worker_ticks=0
         self.snapshots=0
+        self.arm7_reason=0
+        self.refusals=0
 
 class CPU:
     def __init__(self, bus, side, mode=0x1f, thumb=False):
@@ -119,12 +124,15 @@ class CPU:
         if M2 and self.side==0 and addr==WORKER:
             if self.mpu_region2&1:raise PermissionError('Protected SDK ARM7 region executed before MPU guard opened')
             assert self.bus.out[1]==12 or self.bus.worker_ticks>600
+            if self.bus.arm7_reason and self.bus.worker_ticks==0:
+                self.bus.refusals+=1
+                self.bus.worker_ticks=600
             self.bus.worker_ticks+=1
             if self.bus.worker_ticks<=600:
                 self.bus.out[0]=9 if self.bus.worker_ticks%2 else 10
                 u.emu_stop();return
             if self.bus.worker_ticks==601:
-                assert self.bus.frames>180, self.bus.frames
+                if not self.bus.arm7_reason:assert self.bus.frames>180, self.bus.frames
                 assert self.bus.out[1]==12
                 self.bus.out[0]=13;self.bus.events.append((0,13));self.bus.snapshots+=1
             if self.bus.out[1]==12:u.emu_stop();return
@@ -145,7 +153,9 @@ class CPU:
             if self.bus.vcount<previous:self.bus.frames+=1
             self.write(addr,self.bus.vcount,2)
     def write_mmio(self,u,access,addr,size,value,data):
-        if addr==IPC:
+        if M2 and addr==DIAGNOSTIC:
+            self.bus.arm7_reason=value
+        elif addr==IPC:
             self.bus.out[self.side]=(value>>8)&15
             assert value&0x4000, 'IPCSYNC IRQ control was lost'
             self.bus.events.append((self.side,self.bus.out[self.side]))
@@ -322,14 +332,21 @@ for _ in range(40):call7(cpu)
 assert not bus.events
 print('PASS old L+R+Down+Select combination does not trigger')
 if M2:
-    for guard in (0x040000b8,0x04000508):
-        bus=Bus();bus.keys=0x3ff^HOTKEY;cpu=CPU(bus,1)
-        for _ in range(30):call7(cpu)
-        bus.out[0]=10
-        cpu.write(guard,0x80000000 if guard==0x040000b8 else 0x80)
-        call7(cpu)
-        assert bus.out[1]==0
-    print('PASS ARM7 DMA/sound-capture prechecks withdraw request without parking')
+    for guard,reason in [(0x040000b8,512),(0x04000508,1024)]:
+        bus=Bus();bus.keys=0x3ff^HOTKEY;c7=CPU(bus,1);c9=CPU(bus,0)
+        for _ in range(30):call7(c7)
+        c9.start()
+        for _ in range(10):
+            c9.step()
+            if bus.out[0]==10:break
+        c7.write(guard,0x80000000 if guard==0x040000b8 else 0x80)
+        c7.start()
+        for _ in range(100):
+            c7.step();c9.step()
+            if c7.done and c9.done:break
+        assert c7.done and c9.done and bus.arm7_reason==reason and bus.refusals==1
+        c7.check();c9.check()
+    print('PASS ARM7 DMA/sound refusal reaches ARM9 and returns both CPUs safely')
     patch('arm7','rts7_spin_budget',16)
     bus=Bus();bus.keys=0x3ff^HOTKEY;cpu=CPU(bus,1)
     for _ in range(30):call7(cpu)
@@ -359,3 +376,10 @@ if M2:
     assert caught, 'Old missing-MPU-guard bug escaped the model'
     blobs['dim'][offset:offset+4]=saved
     print('PASS MPU entry regression rejects old guard omission and checks exact restoration')
+
+bus=Bus();bus.keys=0x3ff^HOTKEY;bus.card_busy=True;cpu=CPU(bus,1)
+for _ in range(40):call7(cpu)
+assert not bus.events
+bus.card_busy=False;call7(cpu)
+assert bus.out[1]==11
+print('PASS held hotkey retries a temporarily busy card without requiring release')

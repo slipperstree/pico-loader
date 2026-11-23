@@ -29,7 +29,7 @@ REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,
 EXTENTS=[(2048,0x1000),(4096,0x3000),(SECTORS-6144,0x6000)]
 ALLOWED=[first+i for count,first in EXTENTS for i in range(count)]
 
-def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False):
+def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt=False,timeout=False,zero_ready=False,display_capture=False,arm7_reason=0,owner7=False,settle_dma=False):
     u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
     for addr,size in [(0x01ff8000,0x8000),(0x02000000,0x400000),(0x027c0000,0x4000),(0x06840000,0x20000),
                       (0x04000000,0x2000),(0x04100000,0x1000)]:u.mem_map(addr,size)
@@ -50,7 +50,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     stack_start=base+symbols['gRtsM2Stack']-meta['link_base']
     assert workbytes<=0x2000,workbytes
     u.mem_write(base,b'\0'*workbytes);u.mem_write(base,bytes(image))
-    words=[MAGIC,VERSION,SECTORS,len(EXTENTS),0x800,0x10000,GAME,0]
+    words=[MAGIC,VERSION,SECTORS,len(EXTENTS),0x800,0x10000,GAME,arm7_reason]
     for count,first in EXTENTS:words.extend((count,first))
     words += [0]*(72-len(words))
     if badmap:words[9]=0x400 # point into FAT metadata: must be rejected
@@ -64,21 +64,23 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
     done=0x020f0000
     u.mem_write(done,b'\x70\x47')
     original_regs=[0x11110000+i for i in range(13)]
+    original_regs[12]=0x023e0021
     sp=0x027c3d00
     frame=[0x4003,0x8002,0x400b,0x000000df,0xa000001f,0x11110003,
            0x88880000,0x88880001,0x88880002,0x88880003,0x8888000c,0x02001235]
-    u.mem_write(sp,struct.pack('<14I',0x023e0021,0x02000111,*frame))
+    u.mem_write(sp,struct.pack('<12I',*frame))
     u.reg_write(UC_ARM_REG_CPSR,0xdf)
     u.reg_write(UC_ARM_REG_SP,sp);u.reg_write(UC_ARM_REG_LR,done|1)
     for reg,value in zip(REGS,original_regs):u.reg_write(reg,value)
-    u.mem_write(0x04000204,struct.pack('<H',0))
+    u.mem_write(0x04000204,struct.pack('<H',0x800 if owner7 else 0))
     u.mem_write(0x040001a0,struct.pack('<H',0x8000))
     if display_capture:u.mem_write(0x04000064,struct.pack('<I',0x80000000))
-    if busy:u.mem_write(0x040000b8,struct.pack('<I',0x80000000))
+    if busy or settle_dma:u.mem_write(0x040000b8,struct.pack('<I',0x80000000))
     expected=bytearray(u.mem_read(0x02000000,0x400000))
     expected[base-0x02000000:base-0x02000000+workbytes]=b'\0'*workbytes
     state={'mode':'idle','word':0,'sector':0,'read_sector':0,'peer':12,'own':10,
-           'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0}
+           'writes':[],'commands':0,'fault':None,'done':False,'header_phases':[],'cache_ops':0,'vcount':192,'frames':0,'stages':[],'brightness':[]}
+    if settle_dma and not foreign:raise AssertionError('Use foreign guard to test settling without a second full dump')
     control=0x0005707d
     cp={(1,0,0):control,(9,1,0):0x027c000a,(9,1,1):0x20}
     def coproc(uc,addr,size,data):
@@ -95,9 +97,18 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         else:state['fault']=uc.reg_read(UC_ARM_REG_R0)
         uc.emu_stop()
     u.hook_add(UC_HOOK_CODE,stopped,begin=done,end=done)
+    def stage_call(uc,addr,size,data):state['stages'].append((uc.reg_read(UC_ARM_REG_R0),uc.reg_read(UC_ARM_REG_R1)))
+    progress_address=base+symbols['progress']-meta['link_base']
+    u.hook_add(UC_HOOK_CODE,stage_call,begin=progress_address,end=progress_address)
     fault=base+symbols['fault']-meta['link_base']
     u.hook_add(UC_HOOK_CODE,stopped,begin=fault,end=fault)
     def read(uc,access,addr,size,value,data):
+        if addr==0x04000006:
+            previous=state['vcount'];state['vcount']=(previous+17)%263
+            if state['vcount']<previous:state['frames']+=1
+            uc.mem_write(addr,struct.pack('<H',state['vcount']))
+        elif addr==0x040000b8 and settle_dma and state['frames']>=1:
+            uc.mem_write(addr,struct.pack('<I',0))
         if addr==0x04000180:
             uc.mem_write(addr,struct.pack('<H',0x4000|(state['own']<<8)|state['peer']))
         elif addr==0x040001a4:
@@ -122,6 +133,8 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
             current_sp=uc.reg_read(UC_ARM_REG_SP)
             if base<=current_sp<base+workbytes:assert stack_start<=current_sp<=stack_start+1024,('Worker stack escaped',hex(current_sp))
             assert stack_start<=addr and addr+size<=stack_start+1024 or cfg<=addr or base+symbols['ioBudget']-meta['link_base']<=addr<base+symbols['ioBudget']-meta['link_base']+4,('Worker code overwritten / stack overflow',hex(addr))
+        elif addr in (0x0400006c,0x0400106c):
+            state['brightness'].append((addr,value))
         elif addr==0x04000180:
             state['own']=(value>>8)&15
             assert value&0x4000,'IPCSYNC IRQ control lost'
@@ -149,8 +162,21 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
                 if state['sector']==ALLOWED[0]:state['header_phases'].append(struct.unpack_from('<I',state['buffer'],16)[0])
     u.hook_add(UC_HOOK_MEM_WRITE,write,begin=0x02000000,end=0x04100013)
     u.emu_start(base+meta['entry_offset'],0,count=1500000000)
-    if badmap or busy or display_capture:
+    if badmap or busy or display_capture or arm7_reason or owner7:
         assert state['done'] and not state['writes'] and not state['commands'],state
+        if owner7:assert (8,2) in state['stages']
+        if badmap:assert (8,256) in state['stages']
+        if busy or display_capture or arm7_reason:
+            assert state['brightness'].count((0x0400006c,0x400c))==3
+            assert state['brightness'].count((0x0400106c,0x400c))==3
+            assert not state['stages'], 'Unsafe VRAM remap during DMA/capture refusal'
+        else:assert state['frames']>=180, 'S8 feedback was not held long enough'
+        assert bytes(u.mem_read(0x06840000,0x20000))==video
+        assert struct.unpack('<I',u.mem_read(0x04000000,4))[0]==0x00110800
+        assert bytes(u.mem_read(0x04000242,1))==b'\x84'
+        assert struct.unpack('<H',u.mem_read(0x0400006c,2))[0]==0x8008
+        assert [u.reg_read(reg) for reg in REGS]==original_regs
+        assert u.reg_read(UC_ARM_REG_SP)==sp
     elif foreign or corrupt or timeout or zero_ready:
         assert state['fault']==(2 if foreign else 6 if corrupt else 1),state
         assert not state['done'] and 2 not in state['header_phases']
@@ -166,7 +192,7 @@ def run_case(label,base=0x023fa000,badmap=False,busy=False,foreign=False,corrupt
         assert blob[-0x8000:]==itcm
         assert header[20:24]==tuple(frame[6:10])
         assert header[24:32]==tuple(original_regs[4:12])
-        assert header[33]==sp+56 and header[36]==frame[4] and header[38]==0x023e0021
+        assert header[33]==sp+48 and header[36]==frame[4] and header[38]==0x023e0021
         assert [u.reg_read(reg) for reg in REGS]==original_regs
         assert u.reg_read(UC_ARM_REG_SP)==sp and u.reg_read(UC_ARM_REG_LR)==done|1
         assert cp[(1,0,0)]==control and state['cache_ops']>=257
@@ -188,3 +214,7 @@ if '--zero-ready-only' not in sys.argv:
     print('Actual SD timing, cache coherency, MPU/TCM mappings and console hardware remain unvalidated.')
 run_case('continuous SD-not-ready response terminates within shared retry budget',zero_ready=True)
 run_case('active display capture declines without SD access',display_capture=True)
+run_case('ARM7 DMA refusal never issues SD commands',arm7_reason=512)
+run_case('ARM7 sound capture refusal never issues SD commands',arm7_reason=1024)
+run_case('card owner refusal displays S8 reason',owner7=True)
+run_case('one-shot DMA settles before first SD command',settle_dma=True,foreign=True)

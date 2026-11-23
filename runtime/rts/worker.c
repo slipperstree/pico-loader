@@ -222,21 +222,72 @@ static void flushCaches(void)
     __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(zero):"memory");
 }
 
+static void waitFrames(u32 frames)
+{
+    u32 previous=REG16(0x04000006),budget=WAIT_LIMIT;
+    while(frames && budget--)
+    {
+        u32 current=REG16(0x04000006);
+        if(current<previous){--frames;budget=WAIT_LIMIT;}
+        previous=current;
+    }
+}
+static u32 asynchronousBusy(void)
+{
+    u32 mask=REG32(0x04000064)&0x80000000 ? 2048 : 0;
+    for(u32 i=0;i<4;++i)if(REG32(0x040000b8+i*12)&0x80000000)mask|=16u<<i;
+    if(REG32(CARDCTRL)&0x80000000)mask|=4;
+    if(REG16(0x040001a0)&0x80)mask|=8;
+    return mask;
+}
+static void showRefusal(u32 reason)
+{
+    // A live DMA/capture may own VRAM. In that case use only the same readable
+    // brightness controls as M1, and leave all VRAM mappings untouched.
+    if(reason & (0xf0u|512u|1024u|2048u))
+    {
+        u16 a=REG16(0x0400006c),b=REG16(0x0400106c);
+        for(u32 n=0;n<3;++n)
+        {
+            REG16(0x0400006c)=0x400c;REG16(0x0400106c)=0x400c;waitFrames(8);
+            REG16(0x0400006c)=0x8008;REG16(0x0400106c)=0x8008;waitFrames(8);
+        }
+        REG16(0x0400006c)=a;REG16(0x0400106c)=b;
+    }
+    else
+    {
+        progressOpen();progress(8,reason);waitFrames(180);progressClose();
+    }
+}
+
 void rtsM2Run(const u32* entryRegs)
 {
     WorkerState* s=&gRtsM2;
     RtsM2Header* h=&s->header;
-    // Two saved words belong to the secure stub's MPU-region guard.
-    const u32* frame=entryRegs+16;
+    // r12 in the worker wrapper carries the secure stub's region-2 guard.
+    const u32* frame=entryRegs+14;
     u32 control,dtcm,itcm;
     __asm__ volatile("mrc p15,0,%0,c1,c0,0\n mrc p15,0,%1,c9,c1,0\n mrc p15,0,%2,c9,c1,1":"=r"(control),"=r"(dtcm),"=r"(itcm));
-    // First target's standard SDK TCM layout only. A rejection does not write SD.
-    int safe=(control&0x50000)==0x50000 && (dtcm&0x3f)==10 && itcm==0x20 &&
-        (dtcm&~0xfffu)>=0x02400000 && (dtcm&~0xfffu)<=0x02ffc000 &&
-        !(REG32(0x04000064)&0x80000000) && !(REG16(0x04000204)&0x800) && !(REG32(CARDCTRL)&0x80000000) && !(REG16(0x040001a0)&0x80);
-    for(u32 i=0;i<4;++i)if(REG32(0x040000b8+i*12)&0x80000000)safe=0;
+    // Finish hardware work already in flight; no CPU callback is resumed.
+    // One-shot DMA and display capture can clear themselves at the next frame.
+    if(asynchronousBusy())waitFrames(2);
+    u32 reason=asynchronousBusy();
+    if((control&0x50000)!=0x50000 || (dtcm&0x3f)!=10 || itcm!=0x20 ||
+       (dtcm&~0xfffu)<0x02400000 || (dtcm&~0xfffu)>0x02ffc000)reason|=1;
+    if(REG16(0x04000204)&0x800)reason|=2;
+    // ARM7 publishes into an otherwise read-only cache line. Invalidate only
+    // that line before reading the shared diagnostic word; never clean stale data.
+    u32 shared=(u32)&s->info.reserved;
+    __asm__ volatile("mcr p15,0,%0,c7,c6,1"::"r"(shared):"memory");
+    reason|=s->info.reserved;
     u32 first;
-    if(!safe || !mapSector(0,&first)){signalDone();return;}
+    if(!mapSector(0,&first))reason|=256;
+    if(reason)
+    {
+        h->error=reason;
+        showRefusal(reason);
+        signalDone();return; // Never issue SD commands after a refusal.
+    }
     progressOpen();
     progress(1,0);
     clear(h,sizeof(*h));
@@ -247,7 +298,7 @@ void rtsM2Run(const u32* entryRegs)
     for(u32 i=0;i<4;++i)h->regs[i]=frame[6+i];
     for(u32 i=4;i<12;++i)h->regs[i]=entryRegs[i];
     h->regs[12]=frame[10];h->regs[13]=(u32)(frame+12);h->regs[14]=frame[11];h->regs[15]=entryRegs[13];
-    h->reserved[0]=entryRegs[14]; // Original protected MPU region 2.
+    h->reserved[0]=entryRegs[12]; // Original protected MPU region 2.
     h->gateCpsr=frame[4];h->frameAddress=(u32)frame;h->flags=1; // explicitly NOT restorable
     progress(2,0);
     flushCaches();

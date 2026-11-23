@@ -4,6 +4,7 @@
 #include "common.h"
 #ifdef PICO_RTS_PROBE
 #include <cstring>
+#include <stddef.h>
 #include "sections.h"
 #include "gameCode.h"
 #include "thumbInstructions.h"
@@ -16,6 +17,7 @@
 #include "RtsM2Image.h"
 extern RtsSnapshotInfo gRtsSnapshotInfo;
 extern "C" u32 rts9_m2_entry;
+extern "C" u32 rts7_diagnostic_address;
 static u32* sM2EntryAtTarget;
 #endif
 
@@ -180,12 +182,16 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
         return;
     }
     memcpy(target, SECTION_START(patch_rts7), SECTION_SIZE(patch_rts7));
+#ifdef PICO_RTS_SNAPSHOT
+    *(u32*)relocated(&rts7_diagnostic_address,SECTION_START(patch_rts7),target)=
+        (u32)workspace+RTS_M2_CONFIG_OFFSET+offsetof(RtsSnapshotInfo,reserved);
+#endif
     // No target becomes active until both code blocks have been copied.
     epilogue[1] = relocated((void*)rts7_arm, SECTION_START(patch_rts7), target);
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_SNAPSHOT
-    rtsProbeMessage("RTS research: snapshot M2.1\nCapture only, NO load yet.\nHold L+R+Down+A.\nWrites RTS-A2GJ-M2.bin.\nWait until screens recover.");
+    rtsProbeMessage("RTS research: snapshot M2.2\nCapture only, NO load yet.\nHold L+R+Down+A.\nWrites RTS-A2GJ-M2.bin.\nWait until screens recover.");
 #else
     rtsProbeMessage("RTS research: CPU probe M1\nNOT save/load states yet.\nHold L+R+Down+A.\nDim/pause about 3 seconds,\nthen continue automatically.");
 #endif

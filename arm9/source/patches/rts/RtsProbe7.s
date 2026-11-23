@@ -59,9 +59,6 @@ rts7_keys:
     str r1, [r0]
     cmp r1, #30
     blo rts7_done
-    adr r0, rts7_fired
-    mov r1, #1
-    str r1, [r0]
     ldr r0, rts7_card
     ldr r1, [r0]
     tst r1, #0x80000000
@@ -76,6 +73,8 @@ rts7_keys:
     adr r0, rts7_pending
     mov r1, #1
     str r1, [r0]
+    adr r0, rts7_fired
+    str r1, [r0]
     b rts7_done
 rts7_rearm:
     adr r0, rts7_hold_count
@@ -86,19 +85,32 @@ rts7_rearm:
     b rts7_done
 rts7_park:
 #ifdef PICO_RTS_SNAPSHOT
+    ldr r0,rts7_diagnostic_address
+    mov r2,#0
+    str r2,[r0]
     // Reject DMA and sound capture before granting a memory snapshot.
     ldr r0, rts7_dma_control
     mov r3, #4
 91: ldr r2, [r0], #12
     tst r2, #0x80000000
-    bne rts7_m2_decline
+    bne rts7_m2_dma_refusal
     subs r3, r3, #1
     bne 91b
     ldr r0, rts7_capture_control
     ldrh r2, [r0]
     ldr r3, rts7_capture_mask
     tst r2, r3
-    bne rts7_m2_decline
+    bne rts7_m2_capture_refusal
+    b rts7_m2_guard_done
+rts7_m2_dma_refusal:
+    mov r2,#512
+    b rts7_m2_report_refusal
+rts7_m2_capture_refusal:
+    mov r2,#1024
+rts7_m2_report_refusal:
+    ldr r0,rts7_diagnostic_address
+    str r2,[r0]
+rts7_m2_guard_done:
 #endif
     // ARM9 is parked. Do not call BIOS/SDK/file I/O from this critical section.
     mov r3, #0
@@ -199,5 +211,7 @@ rts7_spin_budget: .word 0x04000000
 rts7_dma_control: .word 0x040000b8
 rts7_capture_control: .word 0x04000508
 rts7_capture_mask: .word 0x00008080
+.global rts7_diagnostic_address
+rts7_diagnostic_address: .word 0
 #endif
 #endif
