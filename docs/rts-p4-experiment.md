@@ -10,6 +10,44 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.7: distinguish refusal sources and accept ARM7 main RAM sound aliases
+
+P4.6 hardware showed S8 4096 B. The user powered off before trying B. The
+slot is unchanged phase 0 / sequence 0; no snapshot was written. This code
+was overloaded: the original private SD-busy guard can set it before ARM7
+starts, and later sound/FIFO checks also used it. Thus the result alone does
+not establish that the P4.6 priority fix passed on hardware.
+
+The trace UI now maps that legacy pre-start SD-busy bit to 4010. ARM7's
+preflight distinguishes sound-call busy (4101), existing FIFO error (4102)
+and queue overflow (4103); ARM9 FIFO error is 4201. No FIFO guard is skipped.
+The sound planner has a detailed API while preserving its original 0/1/2/3
+return categories and transactional plan output: 4301..4306 identify
+header/unsupported/master/bias/capture problems; 4400+channel means missing
+observed fields; 4500+channel scalar range; 4600+channel sample address/span;
+4700+channel unsupported PSG placement. The first failing channel is reported.
+
+A definite range-check omission is fixed: in the gated 4 MiB DS profile,
+ARM7 sound DMA can read main RAM through all four aliases in 02xxxxxx.
+The previous planner accepted only 02000000..023fffff. Validation now bounds
+the canonical backing span against 4 MiB while retaining the original source
+address for programming. Alignment, no-wrap length, captured WRAM bounds,
+field coverage and unsupported-write checks remain. This omission is not yet
+confirmed as the source of the user's overloaded 4096 refusal.
+
+The native tests cover all four main RAM aliases, exact end boundaries,
+unaligned/MMIO/overflow rejection, per-channel diagnostics and unchanged plan
+output on failure. Combined worker tests inject each of seven refusal sources
+and require the exact S8 code, a fresh B return, no SD writes, original FIFO
+contents and complete EXMEM restoration. A mirrored-source preflight is also
+executed through the actual ARM9 worker. The former diagnostic data fixture
+used only canonical addresses and complete sound coverage.
+
+Mapping reference: melonDS's own [SPU DMA reads](https://github.com/melonDS-emu/melonDS/blob/master/src/SPU.cpp)
+use ARM7 reads, whose [DS memory mapping](https://github.com/melonDS-emu/melonDS/blob/master/src/NDS.cpp)
+uses the 4 MiB backing mask across 02xxxxxx. No emulator implementation is copied.
+The build remains save-only. Physical save and B-return validation are pending.
+
 ## P4.6: borrow main RAM priority while the save server is in shared RAM
 
 P4.5 hardware last showed S2 0044. The MMIO read has happened, but the start

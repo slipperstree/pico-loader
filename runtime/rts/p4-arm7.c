@@ -26,7 +26,7 @@ static void mmio(void* user,u32 a,u32 bytes,u32 value)
 void rtsP4Arm7Begin(u32 originalIpc)
 {
     gRtsP4.error=0;gRtsP4.ready=0;gRtsP4.release=0;gRtsP4.to7.count=0;
-    if(gRtsSoundBusy || gRtsM2.info.reserved){gRtsP4.error=gRtsSoundBusy ? 4096 : 0;return;}
+    if(gRtsSoundBusy || gRtsM2.info.reserved){gRtsP4.error=gRtsSoundBusy ? 4101 : 0;return;}
     u32* p=gRtsSoundShadow.reserved;
     for(u32 i=0;i<16;++i)p[i]=R32(0x04000400+i*16);
     p[16]=R16(0x04000500)|((u32)R16(0x04000504)<<16);
@@ -37,11 +37,11 @@ void rtsP4Arm7Begin(u32 originalIpc)
     p[23]=R16(0x04000100)|((u32)R16(0x04000104)<<16);
     p[24]=R16(0x04000108)|((u32)R16(0x0400010c)<<16);
     p[25]=1;p[26]=R16(0x04000508);p[27]=0;
-    if(p[20]&0x4000){gRtsP4.error=4096;return;}
+    if(p[20]&0x4000){gRtsP4.error=4102;return;}
     while(!(R16(0x04000184)&0x100))
     {
         u32 n=gRtsP4.to7.count;
-        if(n==16){gRtsP4.error=4096;return;}
+        if(n==16){gRtsP4.error=4103;return;}
         gRtsP4.to7.data[n]=R32(0x04100000);gRtsP4.to7.count=n+1;
     }
 }

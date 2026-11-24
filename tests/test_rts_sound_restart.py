@@ -86,3 +86,29 @@ if len(sys.argv)>2:
  programming(plan(captured));sdk=True
  print('PASS actual private ARM7 SDK PCM setup for all 16 channels yields exact recorded parameters and restart programming')
 (f/'RESULTS.json').write_text(json.dumps({'shadow_and_coverage_guards':'PASS','muted_prepare_and_delayed_release':'PASS','private_sdk_16_channels':'PASS' if sdk else 'not supplied','hardware_playback_tested':False,'exact_audio_position_restored':False,'runtime_hooks_installed':False},indent=2))
+
+
+# Detailed refusals preserve the historical categories and leave output intact.
+detailed=native.RtsBuildSoundRestartDetailed
+detailed.argtypes=build.argtypes+[C.POINTER(C.c_uint32)]
+def inspect(shadow,controls,expected,why):
+ out=Plan();C.memset(C.byref(out),0xa5,512);detail=C.c_uint32(0xffffffff)
+ result=detailed(C.byref(shadow),(C.c_uint32*16)(*controls),0x807f,512,0,C.byref(out),C.byref(detail))
+ assert (result,detail.value)==(expected,why),(result,detail.value,expected,why)
+ if expected:assert C.string_at(C.byref(out),512)==b'\xa5'*512
+ return out
+for alias in (0x02000000,0x02400000,0x02800000,0x02c00000):
+ sh=make_shadow();sh.channels[0].source=alias+0x10000
+ controls=[c.control|0x80000000 for c in sh.channels]
+ out=inspect(sh,controls,0,0);assert out.channels[0].source==alias+0x10000
+for ch in range(16):
+ sh=make_shadow();sh.coverage[ch]&=~0x10
+ inspect(sh,[c.control|0x80000000 for c in sh.channels],2,4400+ch)
+sh=make_shadow();sh.unsupported=1;inspect(sh,[c.control|0x80000000 for c in sh.channels],1,4303)
+sh=make_shadow();sh.channels[0].length=0x400000;inspect(sh,[c.control|0x80000000 for c in sh.channels],3,4500)
+for source in (0x04000400,0x02400001,0x027ffffc,0x02fffffc):
+ sh=make_shadow();sh.channels[0].source=source;inspect(sh,[c.control|0x80000000 for c in sh.channels],3,4600)
+sh=make_shadow();sh.channels[0].source=0x027ffffc;sh.channels[0].loop=0;sh.channels[0].length=1
+inspect(sh,[c.control|0x80000000 for c in sh.channels],0,0)
+sh=make_shadow();controls=[c.control|0x80000000 for c in sh.channels];controls[0]=0xe000007f;inspect(sh,controls,3,4700)
+print('PASS all four 4MiB main-RAM aliases, original source retained, mirror-boundary/unaligned/MMIO rejection, per-channel sound refusal codes')

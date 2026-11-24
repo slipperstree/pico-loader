@@ -28,6 +28,10 @@ _Static_assert(sizeof(RtsSoundShadow)==512 && sizeof(RtsSoundRestartPlan)==512,"
 RTS_SOUND_API void RtsInitSoundShadow(RtsSoundShadow*);
 RTS_SOUND_API int RtsObserveSoundWrite(RtsSoundShadow*,uint32_t address,uint32_t bytes,uint32_t value);
 RTS_SOUND_API int RtsBuildSoundRestart(const RtsSoundShadow*,const uint32_t liveControl[16],uint32_t master,uint32_t bias,uint32_t captureControl,RtsSoundRestartPlan*);
+// Same return categories (0/1/2/3) and transactional plan output, with an
+// optional detailed refusal code: 4301..4306 header, 44xx coverage, 45xx scalar,
+// 46xx sample address/range, 47xx PSG channel. xx is the channel index 00..15.
+RTS_SOUND_API int RtsBuildSoundRestartDetailed(const RtsSoundShadow*,const uint32_t liveControl[16],uint32_t master,uint32_t bias,uint32_t captureControl,RtsSoundRestartPlan*,uint32_t* detail);
 // Unlinked research. Caller validates whole checkpoint and restores sample RAM
 // before Prepare. Release only after both CPUs and device state are coherent.
 // Intentionally restarts samples; does not recover their internal play position.

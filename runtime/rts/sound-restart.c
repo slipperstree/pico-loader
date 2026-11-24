@@ -25,13 +25,23 @@ static int sampleRange(u32 a,u32 words)
 {
     if(a&3 || !words || words>0x400000)return 0;
     u32 n=words*4;
-    if(a>=0x02000000 && a<0x02400000)return n<=0x02400000-a;
+    // This experiment runs in 4 MiB DS mode. ARM7 sound DMA sees main RAM
+    // throughout 02xxxxxx; keep the actual source alias for replay, but bound
+    // the sample against the canonical 4 MiB backing span without wrap.
+    if((a&0xff000000u)==0x02000000u)return n<=0x400000u-(a&0x3fffffu);
     if(a>=0x03000000 && a<0x03800000)return n<=0x8000-(a&0x7fff);
     return a>=0x03800000 && a<0x04000000 && n<=0x10000-(a&0xffff);
 }
-int RtsBuildSoundRestart(const RtsSoundShadow* s,const u32 controls[16],u32 master,u32 bias,u32 capture,RtsSoundRestartPlan* out)
+int RtsBuildSoundRestartDetailed(const RtsSoundShadow* s,const u32 controls[16],u32 master,u32 bias,u32 capture,RtsSoundRestartPlan* out,u32* detail)
 {
-    if(!s || !controls || s->magic!=RTS_SOUND_SHADOW_MAGIC || s->version!=1 || s->unsupported || master>65535 || bias>1023 || capture&0x8080)return 1;
+    if(detail)*detail=0;
+#define REJECT(code,why) do {if(detail)*detail=(why);return (code);} while(0)
+    if(!s || !controls)REJECT(1,4301);
+    if(s->magic!=RTS_SOUND_SHADOW_MAGIC || s->version!=1)REJECT(1,4302);
+    if(s->unsupported)REJECT(1,4303);
+    if(master>65535)REJECT(1,4304);
+    if(bias>1023)REJECT(1,4305);
+    if(capture&0x8080)REJECT(1,4306);
     RtsSoundRestartPlan plan;u32* p=(u32*)&plan;for(u32 i=0;i<128;++i)p[i]=0;
     plan.magic=RTS_SOUND_PLAN_MAGIC;plan.version=1;plan.master=master;plan.bias=bias;plan.sequence=s->sequence;
     for(u32 ch=0;ch<16;++ch)
@@ -39,15 +49,21 @@ int RtsBuildSoundRestart(const RtsSoundShadow* s,const u32 controls[16],u32 mast
         u32 control=controls[ch];if(!(control&0x80000000))continue;
         const RtsSoundChannel* c=&s->channels[ch];u32 format=(control>>29)&3;
         u32 required=format==3 ? 0x300u : 0xfff0u;
-        if((s->coverage[ch]&required)!=required)return 2;
-        if(c->timer>65535 || c->loop>65535 || c->length>0x3fffff)return 3;
-        if(format==3){if(ch<8)return 3;}
-        else if(!sampleRange(c->source,c->loop+c->length))return 3;
+        if((s->coverage[ch]&required)!=required)REJECT(2,4400+ch);
+        if(c->timer>65535 || c->loop>65535 || c->length>0x3fffff)REJECT(3,4500+ch);
+        if(format==3){if(ch<8)REJECT(3,4700+ch);}
+        else if(!sampleRange(c->source,c->loop+c->length))REJECT(3,4600+ch);
         plan.activeMask|=1u<<ch;
         RtsSoundChannel* d=&plan.channels[ch];
         d->control=control;d->source=c->source;d->timer=c->timer;d->loop=c->loop;d->length=c->length;
     }
-    if(out){u32* dst=(u32*)out;for(u32 i=0;i<128;++i)dst[i]=p[i];}return 0;
+    if(out){u32* dst=(u32*)out;for(u32 i=0;i<128;++i)dst[i]=p[i];}
+#undef REJECT
+    return 0;
+}
+int RtsBuildSoundRestart(const RtsSoundShadow* s,const u32 controls[16],u32 master,u32 bias,u32 capture,RtsSoundRestartPlan* out)
+{
+    return RtsBuildSoundRestartDetailed(s,controls,master,bias,capture,out,0);
 }
 void RtsPrepareSoundRestart(const RtsSoundRestartPlan* p,RtsSoundWrite write,void* user)
 {

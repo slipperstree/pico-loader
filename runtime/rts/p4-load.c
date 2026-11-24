@@ -76,7 +76,7 @@ int rtsP4Request(u32 command,u32 block)
 void rtsP4Drain9(void)
 {
     gRtsP4.to9.count=0;
-    if(R16(0x04000184)&0x4000){gRtsP4.error=4096;return;}
+    if(R16(0x04000184)&0x4000){gRtsP4.error=4201;return;}
     while(!(R16(0x04000184)&0x100))
     {
         u32 n=gRtsP4.to9.count;if(n==16)RtsP4Fault(8031);
@@ -123,7 +123,8 @@ u32 rtsP4FreezePayload(void)
 {
     if(gRtsP4.error)return gRtsP4.error;
     const u32* io=gRtsSoundShadow.reserved;
-    if(RtsBuildSoundRestart(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],0))return 4096;
+    u32 detail=0;
+    if(RtsBuildSoundRestartDetailed(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],0,&detail))return detail;
     rtsP4Drain9();if(gRtsP4.error)return gRtsP4.error;
     RtsVideoCapture* v=&gRtsP4Scratch.video;
     for(u32 i=0;i<16;++i)v->reserved[i]=R32(0x04000640+i*4);

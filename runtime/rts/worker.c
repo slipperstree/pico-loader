@@ -344,6 +344,11 @@ static void showRefusal(u32 reason)
     }
     else
     {
+#ifdef PICO_RTS_CPU_TRACE
+        // The legacy 4096 bit here is the pre-start ARM7 SD busy guard.
+        // Keep that mask for safety decisions; only specialize its UI label.
+        if(reason==4096)reason=4010;
+#endif
         progressOpen();progress(8,reason);waitRefusalAck();progressClose();
     }
 }

@@ -22,7 +22,7 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False):
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -42,10 +42,15 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  for n,a in extents:config.extend((n,a))
  config+=[0]*(72-len(config));put(u,cfg,*config,base,meta['memory_bytes']);put(u,cfg+296+76,6)
  if early_refusal:put(u,cfg+36,0x400)
+ if refusal=='sd_busy':put(u,cfg+28,4096)
  for cpu in (u,a7):
   cpu.mem_write(mail+544,capture[512+0x40c000:512+0x40c200]);cpu.mem_write(syms['gRtsP4Identity'],bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')+bytes.fromhex(meta['p4_build_fingerprint'])+b'\0'*16)
   put(cpu,shadow,0x31485341,1,1,0)
-  put(cpu,shadow+16,0x8800407f,0x02010000,65000,4,16);put(cpu,shadow+336,0xfff0)
+  put(cpu,shadow+16,0x8800407f,0x02710000 if source_alias else 0x02010000,65000,4,16);put(cpu,shadow+336,0xfff0)
+  if refusal=='sound_busy':put(cpu,syms['gRtsSoundBusy'],1)
+  if refusal=='sound_coverage':put(cpu,shadow+336,0)
+  if refusal=='sound_unsupported':put(cpu,shadow+12,1)
+  if refusal=='sound_range':put(cpu,shadow+20,0x04000400)
  put(u,syms['gRtsP4TailAddress'],0x02000210)
  # Tail stays part of the captured main RAM, outside the protected work arena.
  tail=syms['rtsArm9RestoreTail'];u.mem_write(0x02000210,bytes(u.mem_read(tail,80)))
@@ -66,7 +71,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   for i in range(4):half(cpu,0x04000102+i*4,0)
  half(a7,0x04000500,0x807f);half(a7,0x04000504,512);put(a7,0x04000400,0x8800407f)
  def a7read(cpu,ac,a,n,val,d):
-  if a==0x04000184:half(cpu,a,0x8000|(0x100 if not fifo7 else 0)|(2 if len(fifo9)==16 else 0))
+  if a==0x04000184:half(cpu,a,0x8000|(0x4000 if refusal=='fifo7_error' else 0)|(0x100 if not fifo7 else 0)|(2 if len(fifo9)==16 else 0))
   elif a==0x04100000:put(cpu,a,fifo7.pop(0))
  def a7write(cpu,ac,a,n,val,d):
   if a==0x04000188:fifo9.append(val)
@@ -128,7 +133,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  for off in range(0,80,4):
   if get(u,0x02000210+off)&0x0f000f10==0x0e000f10:u.hook_add(UC_HOOK_CODE,coproc,begin=0x02000210+off,end=0x02000210+off)
  def read(cpu,ac,a,n,val,d):
-  if a==0x04000184:half(cpu,a,0x8000|(0x100 if not fifo9 else 0)|(2 if len(fifo7)==16 else 0))
+  if a==0x04000184:half(cpu,a,0x8000|(0x4000 if refusal=='fifo9_error' else 0)|(0x100 if not fifo9 else 0)|(2 if len(fifo7)==16 else 0))
   elif a==0x04100000:put(cpu,a,fifo9.pop(0))
   elif a==0x04000006:
    state['vcount']=(state['vcount']+17)%263;state['frames']+=1;half(cpu,a,state['vcount'])
@@ -226,6 +231,13 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert state['done'] and not state['fault'] and not state['writes'] and not state['readcount'] and not state['rpc']
   assert (8,256) in state['stages'] and 8!=state['own'] and fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa]
   print('PASS refusal before start: no SD, no unstarted FIFO replay, current game resumes',flush=True);return state
+ if refusal:
+  expected={'sd_busy':4010,'sound_busy':4101,'fifo7_error':4102,'fifo9_error':4201,'sound_unsupported':4303,'sound_coverage':4400,'sound_range':4600}[refusal]
+  assert state['done'] and state['fault'] is None and (8,expected) in state['stages'],state['stages']
+  assert not state['writes'] and not state['readcount'] and fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa]
+  assert struct.unpack('<H',u.mem_read(0x04000204,2))[0]==h0[39]
+  assert not state['server7']
+  print('PASS detailed refusal',refusal,'-> S8',expected,'fresh B returns, no card writes, FIFO and EXMEM preserved',flush=True);return state
  if release_unready:
   assert state['fault']==8130 and (9,8130) in state['stages'] and not state['done'] and not state['writes']
   assert state['server7'] and not struct.unpack('<H',u.mem_read(0x04000204,2))[0]&0x8800
@@ -239,6 +251,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  if partial:
   assert state['fault']==1 and not state['done'] and state['own']==14 and state['peer']==12
   print('PASS apply read failure holds both CPUs, no normal release',flush=True);return state
+ assert state['minsp9']>=stack,'ARM9 worker stack overflow'
  assert state['done'] and state['fault'] is None,{'pc':hex(u.reg_read(UC_ARM_REG_PC)),**{k:v for k,v in state.items() if k not in ('buffer','stages')}}
  assert fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa],(fifo7,fifo9)
  if load and not (corrupt or identity or empty or TRACE):
@@ -288,7 +301,11 @@ if TRACE:
  make({physical[0]:bytes(blank)},arm7_unready=True)
  make({physical[0]:bytes(blank)},ipc_unlatched=True)
  make(disk,True,True,release_unready=True)
- (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','private_ack_timeout':'PASS','bus_priority_policy':'PASS' if '--bus-check' in sys.argv else 'not run','physical_hardware':False},indent=2))
+ for case in ('sd_busy','sound_busy','fifo7_error','fifo9_error','sound_unsupported','sound_coverage','sound_range'):
+  make({physical[0]:bytes(blank)},refusal=case)
+ make(disk,True,True,source_alias=True)
+ print('PASS actual worker preflight accepts mirrored main RAM sound source without canonicalizing playback address',flush=True)
+ (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','private_ack_timeout':'PASS','detailed_refusals':'PASS','sound_source_alias':'PASS','bus_priority_policy':'PASS' if '--bus-check' in sys.argv else 'not run','physical_hardware':False},indent=2))
  print('PASS trace save, load disabled with no card writes, ready timeout',flush=True);raise SystemExit(0)
 print('Executing independent boot / mutated-state P4 restore...',flush=True);b=make(disk,True,True);print('PASS independent runtime instance: validated file -> main/TCM/WRAM/video/audio + ARM9/ARM7 continuation',flush=True)
 if '--restore-only' in sys.argv:
