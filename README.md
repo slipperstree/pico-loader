@@ -116,3 +116,10 @@ Additional licenses may apply to the project. For details, see the `license` dir
 - [@edo9300](https://github.com/edo9300)
 - [@Tcm0](https://github.com/Tcm0)
 - [@RocketRobz](https://github.com/RocketRobz)
+
+
+## DSPico save-state development branch
+
+This branch also preserves the opt-in P5.0 save-state experiment and its
+verified P4.10 rollback baseline. See the [development checkpoint](docs/rts-development-checkpoint.md)
+for build flags, matching Chinese-capable launcher sources, validation, and recovery.
