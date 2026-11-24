@@ -10,6 +10,7 @@ RtsP4Shared gRtsP4 __attribute__((aligned(32)));
 RtsP4Scratch gRtsP4Scratch __attribute__((aligned(32)));
 RtsP4Identity gRtsP4Identity __attribute__((aligned(32)));
 u32 gRtsP4TailAddress;
+u32 gRtsP4Arm7TailAddress;
 u32 gRtsP4SavedSequence;
 u32 gRtsP4FreshSlot;
 u32 gRtsP4Arm7Stack[96] __attribute__((aligned(8)));
@@ -92,7 +93,17 @@ void rtsP4Arm7Loop(u32 originalIpc,u32 operation)
         else if(command==5)
         {
             if(!destructive)stop();
-            restoreDevice7();gRtsP4.ready=1;m->status=0;m->completed=request;
+            restoreDevice7();
+#ifdef PICO_RTS_LIVE_RESTORE
+            // RAM/FIFO/device preparation is coherent before command 5.
+            // Start samples before leaving main RAM; IRQ continuation stays
+            // parked in private WRAM until the ARM9 secure tail releases it.
+            RtsReleaseSoundRestart(&gRtsP4Scratch.plan,mmio,0);
+            gRtsP4.ready=1;m->status=0;m->completed=request;
+            rtsEnterArm7ContinuationWithTail((const RtsArm7Context*)&m->context,(void*)gRtsP4Arm7TailAddress);
+            stop();
+#else
+            gRtsP4.ready=1;m->status=0;m->completed=request;
             while(!gRtsP4.release)
             {
                 line=R16(0x04000006);if(line<previous)++gRtsM2Frames[0];previous=line;
@@ -100,6 +111,7 @@ void rtsP4Arm7Loop(u32 originalIpc,u32 operation)
             }
             RtsReleaseSoundRestart(&gRtsP4Scratch.plan,mmio,0);
             rtsEnterArm7Continuation((const RtsArm7Context*)&m->context);stop();
+#endif
         }
         else error=3;
         m->status=error;m->completed=request;

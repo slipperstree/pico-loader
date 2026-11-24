@@ -95,7 +95,14 @@ rtsRestoreArm9State:
     orr r2,r1,#31
     msr cpsr_c,r2
     mov r0,r4
+.ifdef RTS_LIVE_RESTORE
+    ldr r7,=0x04000180
+    ldrh r6,[r7]
+    bic r6,r6,#0xf00
+    orr r6,r6,#0x600
+.endif
     bx r5
+.ltorg
 
 .section .text.rtsArm9RestoreTail,"ax"
 .global rtsArm9RestoreTail
@@ -120,7 +127,18 @@ rtsArm9RestoreTail:
     mcr p15,0,r3,c6,c2,0
     mcr p15,0,r2,c1,c0,0
     add r0,r0,#12
+.ifdef RTS_LIVE_RESTORE
+    // r6/r7 were prepared before leaving workspace. No literal/main RAM read
+    // is needed after the MPU closes. ARM7 was already ACKed in private WRAM.
+    strh r6,[r7]
+96: ldrh r1,[r7]
+    tst r1,#15
+    bne 96b // fail closed if the proven private peer never ACKs release
+    bic r6,r6,#0xf00
+    strh r6,[r7]
+.endif
     ldmia r0,{r0-r12,pc}^
 
 .global rtsArm9RestoreTailEnd
+.ltorg
 rtsArm9RestoreTailEnd:

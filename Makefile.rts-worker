@@ -22,9 +22,20 @@ RTS_BUILD := build/rts-worker-p43
 RTS_EXTRA_FLAGS += -DPICO_RTS_CPU_TRACE
 RTS_TRACE_AS_FLAGS := -Wa,--defsym,RTS_TRACE_CPU=1
 endif
+ifeq ($(PICO_RTS_LIVE_RESTORE),1)
+ifeq ($(PICO_RTS_CPU_TRACE),1)
+$(error PICO_RTS_LIVE_RESTORE and PICO_RTS_CPU_TRACE are separate builds)
+endif
+RTS_EXTRA_OBJ := $(subst build/rts-worker-p4/,build/rts-worker-p49/,$(RTS_EXTRA_OBJ))
+RTS_BUILD := build/rts-worker-p49
+RTS_EXTRA_FLAGS += -DPICO_RTS_LIVE_RESTORE -Oz
+RTS_TRACE_AS_FLAGS += -Wa,--defsym,RTS_LIVE_RESTORE=1
+endif
 RTS_FLAGS := -mcpu=arm946e-s -marm -Os -ffreestanding -fno-builtin -fno-jump-tables -fno-stack-protector -fno-pic -fno-tree-loop-distribute-patterns -ffunction-sections -fdata-sections -Icommon -Wall -Wextra
 
-$(RTS_BUILD)/worker.o $(RTS_EXTRA_OBJ): $(wildcard common/Rts*.h)
+RTS_FLAGS += $(if $(filter 1,$(PICO_RTS_LIVE_RESTORE)),-Oz)
+
+$(RTS_BUILD)/worker.o $(RTS_EXTRA_OBJ): $(wildcard common/Rts*.h) runtime/rts/worker-state.h
 
 .PHONY: all
 all: $(RTS_BUILD)/RtsM2Image.h
@@ -35,12 +46,12 @@ $(RTS_BUILD)/worker.o: runtime/rts/worker.c common/RtsSnapshotInfo.h common/RtsA
 
 $(RTS_BUILD)/video-capture.o: runtime/rts/video-capture.c common/RtsVideoCapture.h runtime/rts/worker-state.h common/RtsP4.h
 	mkdir -p $(RTS_BUILD)
-	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_MODE) -std=c17 -c $< -o $@
+	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_MODE) $(RTS_EXTRA_FLAGS) -std=c17 -c $< -o $@
 
 $(RTS_BUILD)/arm9-cpu-capture.o: runtime/rts/arm9-cpu-capture.s
 	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_TRACE_AS_FLAGS) -c $< -o $@
 $(RTS_BUILD)/arm9-state-restore.o: runtime/rts/arm9-state-restore.s
-	$(PREFIX)gcc $(RTS_FLAGS) -c $< -o $@
+	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_TRACE_AS_FLAGS) -c $< -o $@
 $(RTS_BUILD)/arm7-restore.o: runtime/rts/arm7-restore.s
 	$(PREFIX)gcc -mcpu=arm7tdmi -marm $(RTS_TRACE_AS_FLAGS) -c $< -o $@
 $(RTS_BUILD)/arm9-continuation.o: runtime/rts/arm9-continuation.c

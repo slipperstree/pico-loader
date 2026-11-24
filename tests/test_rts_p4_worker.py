@@ -6,12 +6,19 @@ import hashlib,json,os,struct,subprocess,sys,zlib
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE,UC_HOOK_MEM_INVALID
 from unicorn.arm_const import *
-r=Path(sys.argv[1]).resolve();capture=Path(sys.argv[2]).read_bytes();h0=struct.unpack('<128I',capture[:512]);TRACE='--p43' in sys.argv;f=r/('build/rts-worker-p43' if TRACE else 'build/rts-worker-p4')
+r=Path(sys.argv[1]).resolve();capture=Path(sys.argv[2]).read_bytes();h0=struct.unpack('<128I',capture[:512]);TRACE='--p43' in sys.argv;LIVE='--p49' in sys.argv;f=r/('build/rts-worker-p49' if LIVE else 'build/rts-worker-p43' if TRACE else 'build/rts-worker-p4')
 meta=json.loads((f/'RtsM2Image.json').read_text());original=(f/'worker.bin').read_bytes();base=0x023fa000;limit=base+meta['memory_bytes'];assert limit<=0x023ff000
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful'))/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
 syms={p[2]:int(p[0],16)-meta['link_base']+base for l in subprocess.check_output([prefix+'nm',str(f/'worker.elf')],text=True).splitlines() if len(p:=l.split())==3}
 image=bytearray(original)
 for off in meta['relocations']:struct.pack_into('<I',image,off,(struct.unpack_from('<I',image,off)[0]+base-meta['link_base'])&0xffffffff)
+hook49=b'';tail7=wait7=0
+if LIVE:
+ loader49=r/'build/picoLoader9_DSPICO_restore_p49.elf';raw49=f/'hook7.bin'
+ subprocess.run([prefix+'objcopy','--dump-section','patch_rts7='+str(raw49),str(loader49)],check=True)
+ symbols49={p[2]:int(p[0],16) for l in subprocess.check_output([prefix+'nm',str(loader49)],text=True).splitlines() if len(p:=l.split())==3}
+ hook49=raw49.read_bytes();tail7=0x0380bfa4+symbols49['rts7_restore_tail']-symbols49['__start_patch_rts7'];wait7=tail7+28
+ assert struct.unpack_from('<I',hook49,wait7-0x0380bfa4)[0]==0xe1d010b0
 REGS=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,UC_ARM_REG_R10,UC_ARM_REG_R11,UC_ARM_REG_R12]
 cpkeys=[(1,0,0),(2,0,0),(2,0,1),(3,0,0),(5,0,2),(5,0,3)]+[(6,i,0) for i in range(8)]+[(9,1,0),(9,1,1),(9,0,0),(9,0,1),(13,0,1)]
 cpvalues=[h0[14],0x42,h0[40],h0[41],0x15111011,0x55111111,0x04000033,0x0200002b,h0[38],0x08000035,0x027c001b,0x0100002f,0xffff001d,0x027ff017,h0[15],h0[16],0,0,0x1234]
@@ -22,7 +29,7 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False):
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -30,6 +37,8 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  u.mem_write(h0[10],capture[512+0x400000:512+0x404000]);u.mem_write(0x01ff8000,capture[512+0x404000:512+0x40c000])
  private=capture[512+0x40c200:512+0x41c200];shared=capture[512+0x41c200:512+0x424200]
  a7.mem_write(0x03800000,private);a7.mem_write(0x03000000,shared);a7.mem_write(0x037f8000,shared)
+ if LIVE:
+  a7.mem_write(0x0380bfa4,hook49);private=bytes(a7.mem_read(0x03800000,0x10000))
  video=capture[512+0x424200:512+0x424400];v=words(video);vc=[0x04000240,0x04000241,0x04000242,0x04000243,0x04000244,0x04000245,0x04000246,0x04000248,0x04000249]
  for a,b in zip(vc,v[9:18]):u.mem_write(a,bytes([b]))
  for a,b in [(0x04000000,v[5]),(0x04001000,v[6])]:put(u,a,b)
@@ -46,6 +55,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  for cpu in (u,a7):
   cpu.mem_write(mail+544,capture[512+0x40c000:512+0x40c200]);cpu.mem_write(syms['gRtsP4Identity'],bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')+bytes.fromhex(meta['p4_build_fingerprint'])+b'\0'*16)
   put(cpu,shadow,0x31485341,1,1,0)
+  if LIVE:put(cpu,syms['gRtsP4Arm7TailAddress'],tail7)
   put(cpu,shadow+16,0x8800407f,0x02710000 if source_alias else 0x02010000,65000,4,16);put(cpu,shadow+336,0xfff0)
   if refusal=='sound_busy':put(cpu,syms['gRtsSoundBusy'],1)
   if refusal=='sound_coverage':put(cpu,shadow+336,0)
@@ -53,18 +63,19 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   if refusal=='sound_range':put(cpu,shadow+20,0x04000400)
  put(u,syms['gRtsP4TailAddress'],0x02000210)
  # Tail stays part of the captured main RAM, outside the protected work arena.
- tail=syms['rtsArm9RestoreTail'];u.mem_write(0x02000210,bytes(u.mem_read(tail,80)))
+ tail=syms['rtsArm9RestoreTail'];u.mem_write(0x02000210,bytes(u.mem_read(tail,meta['p4_tail_bytes'])))
  # The source capture's secure gate/stub may share this interval. Assert it doesn't.
- pc=h0[34]&~1;assert not 0x02000210<=pc<0x02000260,hex(pc)
+ pc=h0[34]&~1;assert not 0x02000210<=pc<0x02000210+meta['p4_tail_bytes'],hex(pc)
  frame=h0[37];entry=frame-56;entryregs=words(bytes(u.mem_read(entry,56)))
  # Source and fixture target use the same original saved gate ABI.
  put(u,ctrl+4,int(load));put(a7,ctrl+4,int(load))
  fifo9=[0x12345678,0x55aa55aa];fifo7=[0x90001234]
- state={'server7':False,'exmem_writes':[],'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
+ state={'final_wait':False,'final_polls':0,'private7':False,'parking7':False,'private_restore_order':False,'server7':False,'exmem_writes':[],'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
  cp=dict(zip(cpkeys,cpvalues));cp[(6,2,0)]=0
  if mutate:
   u.mem_write(0x02030000,b'changed progress'*30);u.mem_write(0x06810000,b'\xcc'*512);a7.mem_write(0x03800100,b'\xdd'*512)
- if identity:u.mem_write(syms['gRtsP4Identity'],b'X'*32)
+ if identity=='build':u.mem_write(syms['gRtsP4Identity']+32,b'X'*32)
+ elif identity:u.mem_write(syms['gRtsP4Identity'],b'X'*32)
  half(u,0x04000204,h0[39]);half(u,0x040001a0,0x8000)
  for cpu in (u,a7):
   put(cpu,0x04000208,0);put(cpu,0x04000210,0x1040001);put(cpu,0x04000214,1)
@@ -72,12 +83,25 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  half(a7,0x04000500,0x807f);half(a7,0x04000504,512);put(a7,0x04000400,0x8800407f)
  if psg_first:put(a7,0x040004b0,0xe3400301)
  def a7read(cpu,ac,a,n,val,d):
-  if a==0x04000184:half(cpu,a,0x8000|(0x4000 if refusal=='fifo7_error' else 0)|(0x100 if not fifo7 else 0)|(2 if len(fifo9)==16 else 0))
+  if a==0x04000180:half(cpu,a,(state['peer']<<8)|state['own'])
+  elif a==0x04000184:half(cpu,a,0x8000|(0x4000 if refusal=='fifo7_error' else 0)|(0x100 if not fifo7 else 0)|(2 if len(fifo9)==16 else 0))
   elif a==0x04100000:put(cpu,a,fifo7.pop(0))
  def a7write(cpu,ac,a,n,val,d):
+  if a==0x04000180 and LIVE:
+   state['peer']=(val>>8)&15
+   if state['peer']==7:state['server7']=False;state['private7']=True
+   if state['peer']==0 and state['private7']:state['private7']=False
   if a==0x04000188:fifo9.append(val)
   if 0x03000000<=a<0x03008000:cpu.mem_write(0x037f8000+(a&32767),val.to_bytes(n,'little'))
  a7.hook_add(UC_HOOK_MEM_READ,a7read,begin=0x04000000,end=0x04100003);a7.hook_add(UC_HOOK_MEM_WRITE,a7write)
+ if LIVE:
+  def privateBus(cpu,ac,a,n,val,d):
+   assert not state['private7'],'ARM7 touched shared main RAM after private-tail ACK'
+  a7.hook_add(UC_HOOK_MEM_READ|UC_HOOK_MEM_WRITE,privateBus,begin=0x02000000,end=0x023fffff)
+  def privateCode(cpu,a,n,d):
+   assert not (state['private7'] and 0x02000000<=a<0x02400000),'ARM7 fetched code from main RAM after ACK'
+   if a==wait7 and state['parking7']:state['parking7']=False;cpu.emu_stop()
+  a7.hook_add(UC_HOOK_CODE,privateCode)
  done7=0x020f0000
  def call7(name,args,thumb=False):
   a7.reg_write(UC_ARM_REG_CPSR,0xd2 if name=='rtsEnterArm7Continuation' else 0xdf);a7.reg_write(UC_ARM_REG_SP,a7stack+meta['arm7_stack_bytes']);a7.reg_write(UC_ARM_REG_LR,done7)
@@ -86,6 +110,17 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   try:a7.emu_start(syms[name]|int(thumb),end,count=100000)
   except Exception as e:raise AssertionError(('ARM7',name,hex(a7.reg_read(UC_ARM_REG_PC)),hex(a7.reg_read(UC_ARM_REG_SP)),hex(end))) from e
   assert a7.reg_read(UC_ARM_REG_PC)==end,(name,hex(a7.reg_read(UC_ARM_REG_PC)),hex(end))
+ def park7():
+  a7.reg_write(UC_ARM_REG_CPSR,0xd2);a7.reg_write(UC_ARM_REG_SP,a7stack+meta['arm7_stack_bytes']);a7.reg_write(UC_ARM_REG_LR,done7)
+  a7.reg_write(UC_ARM_REG_R0,mail+544);a7.reg_write(UC_ARM_REG_R1,tail7);state['parking7']=True
+  a7.emu_start(syms['rtsEnterArm7ContinuationWithTail'],0,count=200000)
+  assert state['private7'] and a7.reg_read(UC_ARM_REG_PC)==wait7 and state['peer']==7
+ def release7():
+  c7=words(bytes(a7.mem_read(mail+544,512)));end=c7[19]&~1
+  a7.emu_start(a7.reg_read(UC_ARM_REG_PC),end,count=200000)
+  assert a7.reg_read(UC_ARM_REG_PC)==end and state['peer']==0 and not state['private7']
+  assert a7.reg_read(UC_ARM_REG_SP)==c7[2]+48 and a7.reg_read(UC_ARM_REG_CPSR)==c7[3]
+  assert [a7.reg_read(reg) for reg in REGS[2:]]==list(c7[8:19])
  def sync7():
   # ARM7 sees shared main memory, with an independent CPU register bank/MMIO.
   a7.mem_write(base,bytes(u.mem_read(base,meta['memory_bytes'])))
@@ -101,7 +136,12 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    count=get(cpu,ctrl+128)
    for x in words(bytes(cpu.mem_read(ctrl+132,count*4))):fifo9.append(x)
   elif command==4:call7('RtsPrepareSoundRestart',[syms['gRtsP4Scratch'],syms['mmio']|1,0],True)
-  elif command==5:put(cpu,ctrl+8,1)
+  elif command==5:
+   put(cpu,ctrl+8,1)
+   if LIVE:
+    call7('RtsReleaseSoundRestart',[syms['gRtsP4Scratch'],syms['mmio']|1,0],True)
+    park7()
+    if private_ack_unready:state['peer']=0
   else:raise AssertionError(command)
   put(cpu,mail+12,0);put(cpu,mail+8,req)
  u.hook_add(UC_HOOK_MEM_READ,rpc,begin=mail+8,end=mail+11)
@@ -119,7 +159,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    if '--cache-check' in sys.argv:
     if key==(7,14,2) and value==0xc00003e0:cache['after_clean']=True;cache['dirty']={}
     if key==(1,0,0) and cp[key]&4 and not value&4:
-     scratch=cfg+296+512+192
+     scratch=(get(cpu,cfg+296+512) if LIVE else cfg+296+512)+192
      essential=[a for a in cache['dirty'] if not scratch<=a<scratch+44]
      assert not essential,('Dirty RAM/stack stores after final cache clean',list(map(hex,essential[:12])))
      for address,byte in cache['dirty'].items():cpu.mem_write(address,bytes([byte]))
@@ -139,7 +179,11 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   elif a==0x04000006:
    state['vcount']=(state['vcount']+17)%263;state['frames']+=1;half(cpu,a,state['vcount'])
   elif a==0x04000130:half(cpu,a,0x3fd if state['frames']%8>=4 else 0x3ff)
-  elif a==0x04000180:half(cpu,a,0x4000|(state['own']<<8)|state['peer'])
+  elif a==0x04000180:
+   half(cpu,a,0x4000|(state['own']<<8)|state['peer'])
+   if state['final_wait']:
+    state['final_polls']+=1
+    if state['final_polls']>=32:cpu.emu_stop()
   elif a==0x040001a4:
    state['polls']+=1;put(cpu,a,0x80800000 if state['mode'] in ('write','read','poll') else 0)
   elif a==0x04100010:
@@ -159,7 +203,9 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    for i,byte in enumerate(before):cache['dirty'].setdefault(a+i,byte)
   spNow=cpu.reg_read(UC_ARM_REG_SP)
   if stack<=spNow<=stack+1024:state['minsp9']=min(state['minsp9'],spNow)
-  if a==0x04000204:state['exmem_writes'].append((val,state['server7']))
+  if a==0x04000204:
+   state['exmem_writes'].append((val,state['server7']))
+   if LIVE and load and val&0x8000 and state['private7']:state['private_restore_order']=True
   if a==0x04000188:fifo7.append(val)
   elif a==0x04000180:
    state['own']=(val>>8)&15
@@ -175,6 +221,10 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
      call7('rtsP4Arm7Begin',[0x4000],True)
      cpu.mem_write(ctrl,bytes(a7.mem_read(ctrl,224)));put(cpu,ctrl+4,int(load));put(cpu,ctrl+8,1)
      cpu.mem_write(shadow,bytes(a7.mem_read(shadow,512)))
+   elif LIVE and state['own']==6:
+    assert state['private7'] and state['private_restore_order']
+    if release_ack_lost:state['final_wait']=True
+    else:release7();state['restored']=True
    elif state['own']==13:
     if release_unready:state['peer']=10
     else:state['peer']=0;state['server7']=False
@@ -190,7 +240,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   elif a==0x04100010:
    assert state['mode']=='write';state['buffer']+=struct.pack('<I',val);state['word']+=1
    if state['word']==128:disk[state['sector']]=bytes(state['buffer']);state['mode']='idle';state['writes']+=1
-  elif a==ctrl+12 and val==1:
+  elif a==ctrl+12 and val==1 and not LIVE:
    state['restored']=True;sync7();call7('RtsReleaseSoundRestart',[syms['gRtsP4Scratch'],syms['mmio']|1,0],True);call7('rtsEnterArm7Continuation',[mail+544])
   if 0x02000000<=a<0x02400000 and not base<=a<limit:
    assert load and state['readcount']>=sectors,('Destructive write before validation',hex(a),state['readcount'])
@@ -232,6 +282,23 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  u.hook_add(UC_HOOK_MEM_INVALID,invalid)
  try:u.emu_start(syms['rtsM2Run']|1,0,count=700000000)
  except Exception as e:raise AssertionError(('ARM9',hex(u.reg_read(UC_ARM_REG_PC)),hex(u.reg_read(UC_ARM_REG_SP)),hex(u.reg_read(UC_ARM_REG_CPSR)),state['stages'][-2:],state['restored'],[hex(u.reg_read(x)) for x in REGS])) from e
+ if refuse_code:
+  assert state['done'] and state['fault'] is None and not state['restored'] and (8,refuse_code) in state['stages']
+  assert not state['writes'] and state['readcount']==1
+  assert bytes(u.mem_read(0x02030000,16))==b'changed progress'
+  assert fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa]
+  assert struct.unpack('<H',u.mem_read(0x04000204,2))[0]==h0[39]
+  print('PASS file preflight refusal',refuse_code,'-> fresh B returns current game, header read only, FIFO/EXMEM intact',flush=True);return state
+ if private_ack_unready:
+  assert state['fault']==8140 and not state['done'] and not state['restored'] and not state['writes']
+  assert state['private7'] and not state['private_restore_order']
+  assert not struct.unpack('<H',u.mem_read(0x04000204,2))[0]&0x8000
+  print('PASS missing private restore ACK -> L9 8140 with ARM9 priority retained and neither CPU resumed',flush=True);return state
+ if release_ack_lost:
+  assert not state['done'] and not state['restored'] and state['private7'] and state['peer']==7
+  assert state['cpclosed'] and state['final_polls']>=32 and not state['writes']
+  assert 0x02000210<=u.reg_read(UC_ARM_REG_PC)<0x02000210+meta['p4_tail_bytes']
+  print('PASS lost final release ACK -> held in secure tail/private peer, no partial game entry',flush=True);return state
  if early_refusal:
   assert state['done'] and not state['fault'] and not state['writes'] and not state['readcount'] and not state['rpc']
   assert (8,256) in state['stages'] and 8!=state['own'] and fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa]
@@ -303,8 +370,20 @@ privateModel=r.parent/'实机记录'/'P4-local-model.bin'
 if '--reuse' in sys.argv:
  b=privateModel.read_bytes();disk={a:b[i*512:(i+1)*512] for i,a in enumerate(physical)}
 else:
- print('Executing actual P4 save...',flush=True);a=make(disk,psg_first=TRACE);print('PASS full capture, physical extent writes, payload/header CRC, audio shadow and FIFO replay',flush=True)
+ print('Executing actual P4 save...',flush=True);a=make(disk,psg_first=TRACE or LIVE);print('PASS full capture, physical extent writes, payload/header CRC, audio shadow and FIFO replay',flush=True)
  privateModel.write_bytes(b''.join(disk[a] for a in physical))
+if '--handoff-faults' in sys.argv:
+ assert LIVE and '--reuse' in sys.argv and '--fast-io' in sys.argv
+ slot=b''.join(disk[a] for a in physical)
+ assert slot[432:464].hex()==meta['p4_build_fingerprint'],'Fixture must match this worker build'
+ make(disk,True,True,identity='build',refuse_code=1009)
+ bad=dict(disk);header=bytearray(slot[:512]);header[24]^=1;bad[physical[0]]=bytes(header)
+ make(bad,True,True,refuse_code=1002)
+ make(disk,True,True,private_ack_unready=True)
+ make(disk,True,True,release_ack_lost=True)
+ (f/'p49-negative-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'wrong_build':'PASS','header_crc':'PASS','private_park_timeout':'PASS','final_release_no_ack_hold':'PASS','physical_hardware':False},indent=2))
+ print('PASS P4.9 identity/header and private/final handoff refusal cases',flush=True)
+ raise SystemExit(0)
 if TRACE:
  make(disk,True,True)
  make({physical[0]:bytes(blank)},arm7_unready=True)

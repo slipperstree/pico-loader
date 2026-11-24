@@ -10,6 +10,68 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.9: persistent restore with private ARM7 release
+
+P4.8 hardware now passes the first save on the user's 414/MSET 3DS. The
+returned slot is phase 2, sequence 7, with valid header and payload CRCs;
+the recorded write duration is 970 frames (about 16 seconds). This confirms
+the first-save repair, not hardware restore. The complete slot and loaders
+are retained in private backups before updating the TF card.
+
+P4.9 enables load with `PICO_RTS_LIVE_RESTORE=1` in addition to the four
+capture/restore flags below. It is separate from `PICO_RTS_CPU_TRACE=1`.
+The ARM7 shared-RAM server retains the save path's ARM9 main-RAM priority.
+Restoring the game's ARM7 RAM priority while the server still fetches from
+main RAM would reintroduce the hardware arbitration failure.
+
+On restore, command 5 prepares devices and restarts samples, restores ARM7
+registers, then enters a private-WRAM tail. The tail acknowledges with IPC
+nibble 7 and performs no further main-RAM fetch or data read. Only after
+that acknowledgement does ARM9 restore the original EXMEM and CPU state.
+The 104-byte ARM9 secure tail publishes 6, waits for ARM7's zero acknowledgement,
+clears its own nibble, and returns to the saved game. The private ARM7 tail
+restores its dead hook-frame word, preserving captured WRAM bytes exactly.
+Missing private acknowledgement produces L9 8140 plus the peer nibble with
+ARM9 priority retained. A lost final acknowledgement holds in the secure
+tail instead of entering a partly restored game.
+
+The worker remains exactly 20480 bytes; ARM9 and ARM7 stacks remain 1024
+and 384 bytes. ARM9 sector reads and ARM7 RPC transfers serially reuse the
+mailbox data buffer; the separate context at offset 544 is not aliased.
+The progress overlay saves exactly its 90-by-7 footprint. Live worker C uses
+`-Oz`, retaining ARM7-specific code generation and interworking. The original
+SDK calls have also been tested against those compiled production helpers.
+
+The current host-verified installer places the worker at 023fa000, private
+ARM7 tail at 0380c2e4, and ARM9 secure tail at 020003a0. Its local model runs
+the actual save and then restore in an independent runtime with mutated RAM,
+TCM, WRAM, video and CPU state; all restoration comparisons pass. Maximum
+observed ARM9 stack is 872 bytes, ARM7 80 bytes. Wrong ROM/build, header CRC,
+payload corruption, missing slot, early refusal and destructive read failure
+are covered, together with missing private/final acknowledgement faults.
+Sector callbacks are used for the full matrix; this is not a physical SD or
+complete DS hardware simulation.
+
+Old worker-build slots produce L8 1009 B before applying state. Make a new
+save in P4.9 before testing load. This version check does not restrict loading
+to the current boot: same-build completed files remain eligible across reboot.
+Use ordinary 2D dialogue for save/advance/load, then reboot/re-enter/load.
+Hardware restore, timing and repeated use still require user testing.
+
+Reproduce the local matrix with an independently supplied private M3.2 capture:
+
+```sh
+python tests/test_rts_real_installer.py . ROM.nds --p49
+python tests/test_rts_p4_arm7.py . CAPTURE.bin --p49
+python tests/test_rts_p4_worker.py . CAPTURE.bin --p49 --fast-io --cache-check --bus-check
+python tests/test_rts_p4_worker.py . CAPTURE.bin --p49 --reuse --fast-io --cache-check --bus-check --handoff-faults
+python tests/test_rts_sound_hooks.py . CAPTURE.bin --p49
+```
+
+The first worker test writes its private fixture outside the repository;
+`--reuse` requires that matching fixture. Never publish the capture, fixture,
+ROM, `.sav` or disassembly with source or test packages.
+
 ## P4.8: observe direct PSG/noise timer initialization
 
 Hardware P4.7 first shows S8 4411 B after each launch; B returns normally,

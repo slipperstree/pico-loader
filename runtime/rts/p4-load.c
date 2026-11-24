@@ -19,6 +19,9 @@ static int same(const void* a,const void* b,u32 n)
 static void zero(void* p,u32 n){u32* d=p;for(u32 i=0;i<n/4;++i)d[i]=0;}
 void rtsP4Arm9Begin(void)
 {
+#ifdef PICO_RTS_LIVE_RESTORE
+    gRtsM2.readback=(u32*)gRtsArm7Mailbox.data;
+#endif
     rtsP4InvalidateLine((u32)&gRtsP4);
     replayed=0;drained9=0;started7=0;
 }
@@ -154,8 +157,8 @@ static void writeVideo(u32 offset,const u16* source)
         bank=0;while(offset>=vramEnd[bank])++bank;
         old=R8(vramControl[bank]);R8(vramControl[bank])=0x80;(void)R8(vramControl[bank]);
         a=0x06800000+offset;
-        if(bank==2 && offset-0x40000<4096)
-            for(u32 i=0;i<96;++i)s->videoBackup[(offset-0x40000)/512*96+i]=source[i];
+        if(bank==2 && offset-0x40000<RTS_PROGRESS_HEIGHT*512)
+            for(u32 i=0;i<RTS_PROGRESS_WIDTH;++i)s->videoBackup[(offset-0x40000)/512*RTS_PROGRESS_WIDTH+i]=source[i];
     }
     else a=(offset<0xa4800 ? 0x05000000 : 0x07000000)+((offset-0xa4000)&2047);
     for(u32 i=0;i<256;++i)R16(a+i*2)=source[i];
@@ -164,7 +167,7 @@ static void writeVideo(u32 offset,const u16* source)
 static void finishDisplay(const RtsVideoCapture* v)
 {
     WorkerState* s=&gRtsM2;
-    for(u32 y=0;y<8;++y)for(u32 x=0;x<96;++x)R16(0x06840000+y*512+x*2)=s->videoBackup[y*96+x];
+    for(u32 y=0;y<RTS_PROGRESS_HEIGHT;++y)for(u32 x=0;x<RTS_PROGRESS_WIDTH;++x)R16(0x06840000+y*512+x*2)=s->videoBackup[y*RTS_PROGRESS_WIDTH+x];
     for(u32 i=0;i<9;++i)R8(vramControl[i])=v->vram[i];
     for(u32 i=0;i<8;++i)R16(0x04000008+(i&3)*2+(i>=4 ? 0x1000 : 0))=v->bgControl[i];
     R16(0x04000304)=v->power;R32(0x04000000)=v->display[0];R32(0x04001000)=v->display[1];
@@ -177,7 +180,8 @@ u32 rtsP4Load(const RtsP4CardState* card)
     if(old->magic==RTS_P4_MAGIC && old->version==RTS_P4_VERSION && old->phase!=2)return 1001;
     if(old->magic!=RTS_P4_MAGIC || old->version!=RTS_P4_VERSION || old->fileBytes!=RTS_P4_FILE_BYTES || old->payloadBytes!=RTS_P4_PAYLOAD_BYTES ||
        old->gameCode!=RTS_M2_GAME || old->phase!=2 || old->error || (old->flags!=4 && old->flags!=6) || headerCrc(old)!=old->reserved[82])return 1002;
-    if(!same(old->reserved+62,&gRtsP4Identity,64))return 1003;
+    if(!same(old->reserved+62,&gRtsP4Identity,32))return 1003;
+    if(!same(old->reserved+70,gRtsP4Identity.build,32))return 1009;
     if(old->workspaceBase!=s->base || old->workspaceBytes!=s->bytes || !gRtsP4TailAddress ||
        !same(old->reserved+43,h->reserved+43,76) || old->reserved[86]!=h->reserved[86] || old->reserved[87]!=h->reserved[87] ||
        old->reserved[1]!=card->exmem || old->reserved[16]!=RTS_ARM9_CPU_MAGIC || old->reserved[17]!=1 ||
@@ -192,6 +196,11 @@ u32 rtsP4Load(const RtsP4CardState* card)
     if(RtsBuildArm9Continuation(h,1,guestRead,0,&tail.continuation))return 1005;
     checkedRead(1+0x40c000/512,s->readback);memcpy((void*)&gRtsArm7Mailbox.context,s->readback,512);
     if(RtsValidateArm7Continuation((const RtsArm7Context*)&gRtsArm7Mailbox.context,s->base,s->bytes,1,guestRead,0))return 1005;
+#ifdef PICO_RTS_LIVE_RESTORE
+    const RtsArm7Context* a7=(const RtsArm7Context*)&gRtsArm7Mailbox.context;
+    if(a7->parkSp<0x03000000 || a7->parkSp>=0x04000000 ||
+       gRtsP4Arm7TailAddress<0x03800000 || gRtsP4Arm7TailAddress>=0x03810000)return 1005;
+#endif
     checkedRead(1+0x424200/512,s->readback);
     const RtsVideoCapture* video=(const RtsVideoCapture*)s->readback;
     if(video->magic!=RTS_VIDEO_MAGIC || video->version!=1 || video->vramBytes!=0xa4000 || video->paletteBytes!=2048 || video->oamBytes!=2048 ||
@@ -229,15 +238,37 @@ u32 rtsP4Load(const RtsP4CardState* card)
     if(RtsBuildSoundRestart(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],&gRtsP4Scratch.plan))RtsP4Fault(8040);
     rtsP4Request(4,0);send7();rtsP4Request(3,0);
     R32(0x040001a8)=card->command0;R32(0x040001ac)=card->command1;R16(0x040001a0)=card->aux;
-    R32(0x040001a4)=card->cardControl&0x7f7fffff;R16(0x04000204)=card->exmem;
+    R32(0x040001a4)=card->cardControl&0x7f7fffff;
+#ifdef PICO_RTS_LIVE_RESTORE
+    // Return Slot-1, retaining ARM9 RAM priority until ARM7 has restored all
+    // registers and entered its private-WRAM tail.
+    R16(0x04000204)=card->exmem&~0x8000u;
+    if((R16(0x04000204)^(card->exmem&~0x8000u))&0x8800)RtsP4Fault(9);
+    rtsP4Request(5,0);
+    u32 previous=R16(0x04000006),frames=0,spins=0x400000;
+    while((R16(0x04000180)&15)!=7)
+    {
+        u32 line=R16(0x04000006);
+        if((line<previous && ++frames>=180) || !--spins)
+        {RtsP4OpenProgress();RtsP4Fault(8140+(R16(0x04000180)&15));}
+        previous=line;
+    }
+    R16(0x04000204)=card->exmem;
+    if((R16(0x04000204)^card->exmem)&0x8800)RtsP4Fault(9);
+#else
+    R16(0x04000204)=card->exmem;
     if((R16(0x04000204)^card->exmem)&0x800)RtsP4Fault(9);
     rtsP4Request(5,0);
+#endif
     R16(0x04000184)=((h->reserved[85]>>16)&0x8404)|0x4000;
     R16(0x04000180)=h->reserved[85]&0x4f00;
     R32(0x04000214)=~h->reserved[84];R32(0x04000210)=h->reserved[83];
     tail.region2=h->reserved[0];tail.control=h->control;
     u32 tailAddress=h->frameAddress-56;memcpy((void*)tailAddress,&tail,sizeof(tail));
-    R32(0x04000208)=1;gRtsP4.release=1;
+    R32(0x04000208)=1;
+#ifndef PICO_RTS_LIVE_RESTORE
+    gRtsP4.release=1;
+#endif
     rtsP4Drain();
     rtsRestoreArm9State(cpu,(const RtsArm9RestoreTail*)tailAddress,(void*)gRtsP4TailAddress);
     RtsP4Fault(8041);return 0;

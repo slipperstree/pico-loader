@@ -9,11 +9,12 @@ extern "C" {
 __declspec(dllexport)
 #endif
 int RtsValidateArm7Continuation(const RtsArm7Context*,uint32_t workspace,uint32_t bytes,int payloadVerified,RtsReadArm7Bytes,void*);
-// Research primitives only. NOT linked into any live loader. Caller must
-// validate full state/identity and coordinate both CPUs before using these.
+// Research primitives used by the opt-in persistent restore worker. Caller
+// must validate full state/identity and coordinate both CPUs before use.
 // Writer requires masked IRQ/FIQ, IME=0, and main-RAM source and return code.
 int rtsArm7RestoreSector(uint32_t block,const uint32_t data[128]);
 void rtsEnterArm7Continuation(const RtsArm7Context*);
+void rtsEnterArm7ContinuationWithTail(const RtsArm7Context*,void* privateTail);
 #ifdef __cplusplus
 }
 #endif

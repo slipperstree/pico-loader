@@ -29,6 +29,9 @@ static u32* sM2EntryAtTarget;
 #include "RtsP4Profile.h"
 extern RtsP4Identity gRtsP4LoaderIdentity;
 extern "C" u32 rts7_operation_address,rts7_begin_address,rts7_loop_address;
+#ifdef PICO_RTS_LIVE_RESTORE
+extern "C" u32 rts7_restore_tail;
+#endif
 DEFINE_SECTION_SYMBOLS(patch_rtsSoundPcm);
 DEFINE_SECTION_SYMBOLS(patch_rtsSoundTimer);
 DEFINE_SECTION_SYMBOLS(patch_rtsSoundExit);
@@ -292,6 +295,9 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     *(u32*)relocated(&rts7_operation_address,SECTION_START(patch_rts7),target)=ptr[6]+offsetof(RtsP4Shared,operation);
     *(u32*)relocated(&rts7_begin_address,SECTION_START(patch_rts7),target)=ptr[1];
     *(u32*)relocated(&rts7_loop_address,SECTION_START(patch_rts7),target)=ptr[0];
+#ifdef PICO_RTS_LIVE_RESTORE
+    *(u32*)ptr[14]=relocated(&rts7_restore_tail,SECTION_START(patch_rts7),target);
+#endif
 #endif
     // No target becomes active until all mandatory blocks have been copied.
     epilogue[1] = relocated((void*)rts7_arm, SECTION_START(patch_rts7), target);
@@ -304,7 +310,11 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
 #ifdef PICO_RTS_CPU_TRACE
     rtsProbeMessage("RTS research: PSG capture P4.8\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2/S9 line.");
 #else
+#ifdef PICO_RTS_LIVE_RESTORE
+    rtsProbeMessage("RTS research: live restore P4.9\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nResave after version change.");
+#else
     rtsProbeMessage("RTS research: restore P4.2\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nAudio restarts. 3D incomplete.");
+#endif
 #endif
 #else
     rtsProbeMessage("RTS research: capture M3.2\nARM7 + VRAM/palette/OAM.\nCapture only, NO load yet.\nHold L+R+Down+A.");

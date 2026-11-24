@@ -7,7 +7,7 @@ from ndspy import codeCompression
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn.arm_const import *
 full='--full' in sys.argv
-root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);TRACE='--p43' in sys.argv;P4='--p4' in sys.argv or TRACE;M32='--m32' in sys.argv or P4;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_trace_p43.elf' if TRACE else 'build/picoLoader9_DSPICO_restore_p4.elf' if P4 else 'build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
+root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);TRACE='--p43' in sys.argv;LIVE='--p49' in sys.argv;P4='--p4' in sys.argv or TRACE or LIVE;M32='--m32' in sys.argv or P4;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_restore_p49.elf' if LIVE else 'build/picoLoader9_DSPICO_trace_p43.elf' if TRACE else 'build/picoLoader9_DSPICO_restore_p4.elf' if P4 else 'build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
 # This optional integration test uses a separately supplied, exact A2GJ image.
 # No ROM data or extracted game code is written into the repository.
 assert hashlib.sha256(rompath.read_bytes()).hexdigest()=='85e0e265a9d855a5d156a09794571b93fb13eab616814d5df49e9fcec01277fb', 'Unexpected test ROM'
@@ -86,7 +86,7 @@ u.hook_add(UC_HOOK_CODE,prompt,begin=symbols['rtsProbeMessage'],end=symbols['rts
 arm7apply=next(v for k,v in symbols.items() if k.startswith('_ZNK11Arm7Patcher12ApplyPatches'))
 call(arm7apply,[0x07800100,platform,0,0x07800120,0x07800124,0])
 instruction,hook=struct.unpack('<II',u.mem_read(rom.arm7RamAddress+0x3c5c,8))
-folder=root/('build/rts-worker-p43' if TRACE else 'build/rts-worker-p4' if P4 else 'build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
+folder=root/('build/rts-worker-p49' if LIVE else 'build/rts-worker-p43' if TRACE else 'build/rts-worker-p4' if P4 else 'build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
 meta=json.loads((folder/'RtsM2Image.json').read_text())
 worker_literal=struct.unpack('<I',u.mem_read(symbols['_ZL16sM2EntryAtTarget'],4))[0]
 worker=struct.unpack('<I',u.mem_read(worker_literal,4))[0]
@@ -98,7 +98,7 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and ('PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
+assert state['warnings'] and ('live restore P4.9' if LIVE else 'PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
@@ -117,7 +117,7 @@ if M3:
         assert literal==worker+offset
         report[label]=hex(literal)
 if P4:
-    ptr=struct.unpack('<14I',u.mem_read(worker+meta['p4_pointers_offset'],56))
+    ptr=struct.unpack('<15I' if LIVE else '<14I',u.mem_read(worker+meta['p4_pointers_offset'],60 if LIVE else 56))
     tail=struct.unpack('<I',u.mem_read(ptr[9],4))[0]
     assert 0x02000000<=tail and tail+meta['p4_tail_bytes']<=0x02000800
     assert bytes(u.mem_read(tail,meta['p4_tail_bytes']))==bytes(u.mem_read(ptr[8],meta['p4_tail_bytes']))
@@ -143,6 +143,11 @@ if P4:
     literal=targets[0]+symbols['rtsSoundReloadObserve']-symbols['__start_patch_rtsSoundReload']
     assert struct.unpack('<I',u.mem_read(literal,4))[0]==ptr[13]
     report['psg_noise_shared_timer_hook']=hex(targets[0])
+    if LIVE:
+        privateTail=hook+symbols['rts7_restore_tail']-symbols['__start_patch_rts7']
+        assert struct.unpack('<I',u.mem_read(ptr[14],4))[0]==privateTail
+        assert 0x0380bc90<=privateTail and privateTail+72<=0x0380c490
+        report['arm7_private_restore_tail']=hex(privateTail)
     report['persistent_identity']='loaded code SHA + build fingerprint (full ROM host-verified)'
     report['secure_tail']=hex(tail)
 report['clock']=hex(clock)

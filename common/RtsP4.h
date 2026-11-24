@@ -34,7 +34,7 @@ extern RtsP4Scratch gRtsP4Scratch;
 extern RtsP4Identity gRtsP4Identity;
 extern volatile uint32_t gRtsSoundBusy;
 extern RtsSoundShadow gRtsSoundShadow;
-extern uint32_t gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4FreshSlot;
+extern uint32_t gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4FreshSlot,gRtsP4Arm7TailAddress;
 void rtsP4Arm7Begin(uint32_t originalIpc);
 void rtsP4Arm7Entry(void);
 void rtsP4Arm7Loop(uint32_t originalIpc,uint32_t operation);
@@ -54,6 +54,7 @@ int rtsP4Request(uint32_t command,uint32_t block);
 uint32_t RtsP4Crc(uint32_t,const uint32_t*,uint32_t);
 int RtsP4ReadSector(uint32_t,uint32_t*);
 void RtsP4Progress(uint32_t,uint32_t);
+void RtsP4OpenProgress(void);
 void RtsP4Heartbeat(uint32_t);
 __attribute__((noreturn)) void RtsP4Fault(uint32_t);
 #ifdef __cplusplus

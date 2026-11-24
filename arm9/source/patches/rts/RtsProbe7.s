@@ -279,7 +279,7 @@ rts7_wait_release:
     ldrh r1, [r0]
     and r1, r1, #15
     cmp r1, #10
-#ifdef PICO_RTS_CPU_TRACE
+#if defined(PICO_RTS_CPU_TRACE) || defined(PICO_RTS_LIVE_RESTORE)
     beq 94f
     cmp r1,#13
 94:
@@ -287,7 +287,7 @@ rts7_wait_release:
     bne rts7_restore
     subs r5, r5, #1
     bne rts7_wait_release
-#ifdef PICO_RTS_CPU_TRACE
+#if defined(PICO_RTS_CPU_TRACE) || defined(PICO_RTS_LIVE_RESTORE)
     b rts7_m2_fault // Never run game code while ARM9 still owns the handoff.
 #else
     b rts7_restore
@@ -348,6 +348,32 @@ rts7_service_address: .word 0
 rts7_operation_address: .word 0
 rts7_begin_address: .word 0
 rts7_loop_address: .word 0
+#ifdef PICO_RTS_LIVE_RESTORE
+.global rts7_restore_tail
+.type rts7_restore_tail,%function
+// All target registers and IRQ banks are already restored. Only caller-scratch
+// r0/r1 are touched. Save flags in the dead hook's LR slot, then restore that
+// slot from live LR before returning, so captured WRAM bytes remain identical.
+rts7_restore_tail:
+    mrs r1,cpsr
+    stmdb sp!,{r1}
+    ldr r0,rts7_ipc
+    ldrh r1,[r0]
+    bic r1,r1,#0xf00
+    orr r1,r1,#0x700
+    strh r1,[r0] // private WRAM parked: no more main RAM reads or fetches
+95: ldrh r1,[r0]
+    and r1,r1,#15
+    cmp r1,#6
+    bne 95b
+    ldrh r1,[r0]
+    bic r1,r1,#0xf00
+    strh r1,[r0] // ACK release, original outgoing nibble was idle 0
+    ldmia sp!,{r1}
+    msr cpsr_cxsf,r1
+    str lr,[sp,#-4]
+    bx lr
+#endif
 #endif
 #endif
 #endif

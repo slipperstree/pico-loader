@@ -77,7 +77,7 @@ static void progressOpen(void)
     s->oldVramC=REG8(0x04000242);
     REG8(0x04000242)=0x80; // Bank C temporarily in LCDC, framebuffer display.
     volatile u16* fb=(volatile u16*)0x06840000;
-    for(u32 y=0;y<8;++y)for(u32 x=0;x<96;++x)s->videoBackup[y*96+x]=fb[y*256+x];
+    for(u32 y=0;y<RTS_PROGRESS_HEIGHT;++y)for(u32 x=0;x<RTS_PROGRESS_WIDTH;++x)s->videoBackup[y*RTS_PROGRESS_WIDTH+x]=fb[y*256+x];
     REG32(0x04000000)=0x000a0000; // Main VRAM display, bank C.
     REG16(0x0400006c)=0;
     s->videoActive=1;
@@ -115,7 +115,7 @@ static void progress(u32 stage,u32 value)
     if(stage==8 && value==1001)memcpy(text,"NO SAVE   B    ",15);
 #endif
     volatile u16* fb=(volatile u16*)0x06840000;
-    for(u32 y=0;y<8;++y)for(u32 x=0;x<96;++x)fb[y*256+x]=0x8000;
+    for(u32 y=0;y<RTS_PROGRESS_HEIGHT;++y)for(u32 x=0;x<RTS_PROGRESS_WIDTH;++x)fb[y*256+x]=0x8000;
     for(u32 i=0;i<15;++i)for(u32 x=0;x<5;++x){u8 bits=glyph(text[i],x);for(u32 y=0;y<7;++y)if(bits&(1u<<y))fb[y*256+i*6+x]=0xffff;}
 }
 static void progressClose(void)
@@ -123,7 +123,7 @@ static void progressClose(void)
     WorkerState* s=&gRtsM2;
     if(!s->videoActive)return;
     volatile u16* fb=(volatile u16*)0x06840000;
-    for(u32 y=0;y<8;++y)for(u32 x=0;x<96;++x)fb[y*256+x]=s->videoBackup[y*96+x];
+    for(u32 y=0;y<RTS_PROGRESS_HEIGHT;++y)for(u32 x=0;x<RTS_PROGRESS_WIDTH;++x)fb[y*256+x]=s->videoBackup[y*RTS_PROGRESS_WIDTH+x];
     REG32(0x04000000)=s->oldDisplay;
     REG16(0x0400006c)=s->oldBrightness;
     REG8(0x04000242)=s->oldVramC;
@@ -258,13 +258,13 @@ static void signalDone(void)
     REG16(IPC)=(REG16(IPC)&~0xf00u)|0xd00;
     for(u32 i=0;i<WAIT_LIMIT;++i)
     {
-#ifdef PICO_RTS_CPU_TRACE
+#if defined(PICO_RTS_CPU_TRACE) || defined(PICO_RTS_LIVE_RESTORE)
         if((REG16(IPC)&15)==0)return; // ARM7 trace uses non-C status nibbles.
 #else
         if((REG16(IPC)&15)!=12)return;
 #endif
     }
-#ifdef PICO_RTS_CPU_TRACE
+#if defined(PICO_RTS_CPU_TRACE) || defined(PICO_RTS_LIVE_RESTORE)
     RtsP4Fault(8130); // Retain ARM9 main RAM priority if private ACK never arrives.
 #endif
 }
@@ -344,7 +344,7 @@ static void showRefusal(u32 reason)
     }
     else
     {
-#ifdef PICO_RTS_CPU_TRACE
+#if defined(PICO_RTS_CPU_TRACE) || defined(PICO_RTS_LIVE_RESTORE)
         // The legacy 4096 bit here is the pre-start ARM7 SD busy guard.
         // Keep that mask for safety decisions; only specialize its UI label.
         if(reason==4096)reason=4010;
@@ -426,11 +426,9 @@ void rtsM2Run(const u32* entryRegs)
         signalDone();return; // Never issue SD commands after a refusal.
     }
     // ARM7 published C only after its whole SD transaction and hardware guards.
-    // The save-only trace server executes ARM7 code in shared main RAM.
-    // Borrow ARM9 priority before sending start 8, not after ARM7 has entered.
-    // Full restore needs a separate final-tail ownership protocol before this
-    // policy can be enabled there; trace builds intentionally exclude load.
-#ifdef PICO_RTS_CPU_TRACE
+    // ARM7's server executes in shared main RAM. Borrow ARM9 priority before
+    // start 8. Live load returns priority only after the private WRAM ACK.
+#if defined(PICO_RTS_CPU_TRACE) || defined(PICO_RTS_LIVE_RESTORE)
     const u32 borrowedExmem=0x8800u; // Slot-1 + main RAM priority.
 #else
     const u32 borrowedExmem=0x800u; // Legacy/full experiment unchanged.
@@ -553,7 +551,7 @@ void rtsM2Run(const u32* entryRegs)
                 // Header readback is no longer needed during payload writes.
                 // Reuse its sector buffer for workspace exclusion, retaining
                 // the bounded arena reservation despite the diagnostic features.
-                clear(s->readback,sizeof(s->readback));src=s->readback;
+                clear(s->readback,512);src=s->readback;
             }
             else src=(const u32*)address;
         }
@@ -615,7 +613,7 @@ cleanup:
     REG16(0x040001a0)=aux;
     REG32(CARDCTRL)=oldCardControl&0x7f7fffff;
     setCache(oldCi,oldBuffer,control);
-#ifdef PICO_RTS_CPU_TRACE
+#if defined(PICO_RTS_CPU_TRACE) || defined(PICO_RTS_LIVE_RESTORE)
     // Keep progress visible if private ACK times out; restore priority only
     // after ARM7 is parked in private WRAM waiting for the outer hook.
     signalDone();
@@ -623,7 +621,7 @@ cleanup:
     REG16(0x04000204)=oldExmem;
     if((REG16(0x04000204)^oldExmem)&borrowedExmem)fault(9);
     progressClose();
-#ifndef PICO_RTS_CPU_TRACE
+#if !defined(PICO_RTS_CPU_TRACE) && !defined(PICO_RTS_LIVE_RESTORE)
     signalDone();
 #endif
 }
@@ -635,6 +633,7 @@ __attribute__((noinline,target("arm"))) void rtsP4Drain(void){__asm__ volatile("
 uint32_t RtsP4Crc(uint32_t v,const uint32_t* p,uint32_t n){return crc(v,p,n);}
 int RtsP4ReadSector(uint32_t i,uint32_t* p){return readSector(i,p);}
 void RtsP4Progress(uint32_t stage,uint32_t value){progress(stage,value);}
+void RtsP4OpenProgress(void){if(!gRtsM2.videoActive)progressOpen();}
 void RtsP4Heartbeat(uint32_t index){heartbeat(index);}
 void RtsP4Fault(uint32_t code){fault(code);}
 #endif

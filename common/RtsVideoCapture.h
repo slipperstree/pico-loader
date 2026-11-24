@@ -22,3 +22,14 @@ int RtsReadVideoSector(const RtsVideoCapture*,uint32_t sector,uint16_t out[256],
 #ifdef __cplusplus
 }
 #endif
+
+
+// The live loader uses exactly the 15-character, 5x7 progress footprint.
+// Diagnostic CPU tracing retains its original padded strip.
+#ifdef PICO_RTS_LIVE_RESTORE
+#define RTS_PROGRESS_WIDTH 90u
+#define RTS_PROGRESS_HEIGHT 7u
+#else
+#define RTS_PROGRESS_WIDTH 96u
+#define RTS_PROGRESS_HEIGHT 8u
+#endif

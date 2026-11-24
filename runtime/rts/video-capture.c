@@ -36,8 +36,8 @@ __attribute__((noinline)) int RtsReadVideoSector(const RtsVideoCapture* s,u32 se
         REG8(control[bank])=old;(void)REG8(control[bank]);
         // Bank C has the live progress line. File must contain original game
         // pixels. A 512-byte sector is exactly one 256-pixel framebuffer row.
-        if(bank==2 && offset-0x40000<8*512)
-            for(u32 i=0;i<96;++i)out[i]=backup[(offset-0x40000)/512*96+i];
+        if(bank==2 && offset-0x40000<RTS_PROGRESS_HEIGHT*512)
+            for(u32 i=0;i<RTS_PROGRESS_WIDTH;++i)out[i]=backup[(offset-0x40000)/512*RTS_PROGRESS_WIDTH+i];
     }
     return 1;
 }

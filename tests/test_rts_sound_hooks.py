@@ -7,10 +7,18 @@ from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_WRITE
 from unicorn.arm_const import *
 r=Path(sys.argv[1]).resolve();snapshot=Path(sys.argv[2]);blob=snapshot.read_bytes();assert len(blob)==0x4c9600
 spec=importlib.util.spec_from_file_location('sound',r/'tests/test_rts_sound_restart.py');s=importlib.util.module_from_spec(spec);spec.loader.exec_module(s)
-f=r/'build/rts-sound-hooks';f.mkdir(exist_ok=True);prefix=s.prefix
+production='--p49' in sys.argv
+f=r/('build/rts-sound-hooks-p49' if production else 'build/rts-sound-hooks');f.mkdir(exist_ok=True);prefix=s.prefix
 ld=f/'hooks.ld';ld.write_text('SECTIONS { . = 0x023fa000; .text : { *(.text*) } .rodata : { *(.rodata*) } .data : { *(.data*) } .bss (NOLOAD) : { *(.bss*) *(COMMON) } . = 0x0380c400; .pcm : { *(patch_rtsSoundPcm) } . = 0x0380c500; .timer : { *(patch_rtsSoundTimer) } . = 0x0380c600; .exit : { *(patch_rtsSoundExit) } . = 0x0380c700; .reload : { *(patch_rtsSoundReload) } /DISCARD/ : { *(.ARM.exidx*) *(.ARM.extab*) } }')
 elf=f/'hooks.elf';subprocess.run([prefix+'gcc','-mcpu=arm7tdmi','-marm','-Os','-ffreestanding','-fno-builtin','-fno-unwind-tables','-fno-asynchronous-unwind-tables','-DPICO_RTS_AUDIO_SHADOW','-nostdlib','-Wl,--build-id=none,-e,rtsSoundObservePcm','-I'+str(r/'common'),'-T',str(ld),str(r/'runtime/rts/sound-observer.c'),str(r/'runtime/rts/sound-restart.c'),str(r/'arm9/source/patches/rts/RtsSoundHooks7.s'),'-o',str(elf)],check=True)
 syms={p[2]:int(p[0],16) for line in subprocess.check_output([prefix+'nm',str(elf)],text=True).splitlines() if len(p:=line.split())==3}
+productionImage=None
+if production:
+ wf=r/'build/rts-worker-p49';pm=json.loads((wf/'RtsM2Image.json').read_text());productionImage=bytearray((wf/'worker.bin').read_bytes());runtimeBase=0x023fa000
+ for off in pm['relocations']:struct.pack_into('<I',productionImage,off,(struct.unpack_from('<I',productionImage,off)[0]+runtimeBase-pm['link_base'])&0xffffffff)
+ ps={p[2]:int(p[0],16)-pm['link_base']+runtimeBase for line in subprocess.check_output([prefix+'nm',str(wf/'worker.elf')],text=True).splitlines() if len(p:=line.split())==3}
+ for name in ('gRtsSoundShadow','gRtsSoundBusy'):syms[name]=ps[name]
+ for name in ('rtsSoundObservePcm','rtsSoundObserveTimer','rtsSoundObserveReload'):syms[name]=ps[name]|1
 raw=elf.read_bytes();phoff=struct.unpack_from('<I',raw,28)[0];phsize,phnum=struct.unpack_from('<HH',raw,42)
 regs=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_R4,UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8,UC_ARM_REG_R9,UC_ARM_REG_R10,UC_ARM_REG_R11,UC_ARM_REG_R12]
 pcm,timer,pcmExit,timerExit=0x037ff298,0x037ff068,0x037ff350,0x037ff07c
@@ -24,9 +32,10 @@ def model(patched):
  assert bytes(u.mem_read(timer,8))==struct.pack('<II',0xe2611801,0xe1a00200)
  for entry in (psg,noise):assert bytes(u.mem_read(entry,8))==struct.pack('<II',0xe92d40f0,0xe24dd004)
  if patched:
+  if production:u.mem_write(runtimeBase,bytes(productionImage))
   for i in range(phnum):
    kind,off,a,pa,n,memsize,flags,align=struct.unpack_from('<8I',raw,phoff+i*phsize)
-   if kind==1 and n:u.mem_write(a,raw[off:off+n])
+   if kind==1 and n and (not production or a>=0x03800000):u.mem_write(a,raw[off:off+n])
   shadow=s.Shadow();s.init(C.byref(shadow));u.mem_write(syms['gRtsSoundShadow'],C.string_at(C.byref(shadow),512))
   for name,helper,resume in [('Pcm','rtsSoundObservePcm',pcm+8),('Timer','rtsSoundObserveTimer',timer+8)]:
    for literal,value in [('Busy',syms['gRtsSoundBusy']),('Observe',syms[helper]),('Resume',resume)]:u.mem_write(syms['rtsSound'+name+literal],struct.pack('<I',value))
@@ -113,3 +122,10 @@ for entry,channels in ((psg,range(8,14)),(noise,range(14,16))):
 print('PASS actual PSG 8..13 and noise 14..15 SDK: identical writes/registers/flags/stack, observed timers, IRQ-atomic shadow/TMR store, restart plan valid')
 result=json.loads((f/'RESULTS.json').read_text());result.update({'psg_noise_sdk_abi':'PASS','psg_noise_atomic_timer':'PASS','cold_psg11_legacy_4411_reproduced':'PASS','cold_psg11_first_preflight':'PASS'})
 (f/'RESULTS.json').write_text(json.dumps(result,indent=2))
+
+
+if production:
+ result=json.loads((f/'RESULTS.json').read_text())
+ result.update({'worker_image_sha256':__import__('hashlib').sha256((wf/'worker.bin').read_bytes()).hexdigest(),'build_fingerprint':pm['p4_build_fingerprint'],'compiled_worker_oz_helpers':'PASS'})
+ (f/'RESULTS.json').write_text(json.dumps(result,indent=2))
+ print('PASS production P4.9 -Oz ARM7 helpers with original SDK and atomic stubs')

@@ -1,9 +1,9 @@
-// Original ARM7TDMI restore research. No live call site or load hotkey.
+// ARM7TDMI restore primitives for the opt-in persistent restore worker.
 .cpu arm7tdmi
 .syntax unified
 .arm
 .section .text.rtsArm7Restore,"ax"
-.global rtsArm7RestoreSector, rtsEnterArm7Continuation
+.global rtsArm7RestoreSector, rtsEnterArm7Continuation, rtsEnterArm7ContinuationWithTail
 .type rtsArm7RestoreSector,%function
 // Stackless sector writer, executable in main RAM while private WRAM is replaced.
 rtsArm7RestoreSector:
@@ -65,6 +65,10 @@ refuse:
 // restored, both CPUs controlled. Restores the original VBlank epilogue ABI:
 // r0/r1 are caller-scratch; r2-r12/LR, banked state, SP/CPSR and IME restored.
 rtsEnterArm7Continuation:
+    mov r1,#0
+.type rtsEnterArm7ContinuationWithTail,%function
+rtsEnterArm7ContinuationWithTail:
+    mov r4,r1
     mrs r1,cpsr
     orr r1,r1,#192
     msr cpsr_c,r1
@@ -113,8 +117,11 @@ rtsEnterArm7Continuation:
     ldr r3,[r0,#16]
     ldr r1,=0x04000208
     str r3,[r1]
+    cmp r4,#0
+    ldreq r1,[r0,#76]
+    movne r1,r4
     msr cpsr_cxsf,r2
     add r0,r0,#32
     ldmia r0,{r2-r12,lr}
-    bx lr
+    bx r1
 .ltorg
