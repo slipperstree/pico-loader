@@ -37,10 +37,10 @@ milestones. The original local research branches are retained too.
 ## Menu development (P6)
 
 The initial standalone controller/renderer is recorded in [stage 1](rts-menu-stage1.md).
-[P6 integrates the four-slot LRA menu](rts-menu-p6.md), transient VRAM overlay,
+[P6 integrates the four-slot menu](rts-menu-p6.md), transient VRAM overlay,
 previews, RTC timestamps and configurable diagnostics. Its console verification
 is pending. P5.0 remains a named rollback point; its direct-hotkey behavior is
-retained below for reference.
+retained below for reference. P6.0 basic functionality has since been confirmed by the user; P6.1 adds dirty painting, compatible-slot discovery and L+R+Select, with its own hardware verification pending.
 
 ## P5 direct-hotkey behavior
 

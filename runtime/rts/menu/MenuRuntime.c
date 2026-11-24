@@ -8,7 +8,7 @@ typedef uint32_t u32;typedef uint16_t u16;typedef uint8_t u8;
 #define FB ((u16*)0x06840000)
 RtsMenuBoot gRtsMenuBoot;
 static u32 restoreBuffer[128];
-static struct {RtsMenu menu;u32 active,captureBank,captureValid,display,previews;u16 power,mainBright,subBright;u8 bankC,bankD;RtsMenuTime time;} ui;
+static struct {RtsMenu menu;u32 active,captureBank,captureValid,display,previews;u16 power,mainBright,subBright;u8 bankC,bankD;RtsMenuTime time;RtsMenuPaint paint;} ui;
 static void copy(void* d,const void* s,u32 n){u16* a=d;const u16* b=s;for(u32 i=0;i<n/2;++i)a[i]=b[i];}
 static void auxRead(u32 sector,u32* out){if(!RtsMenuRawRead(&gRtsMenuBoot.aux,sector,out))RtsP4Fault(61);}
 static void auxWrite(u32 sector,const u32* in){if(!RtsMenuRawWrite(&gRtsMenuBoot.aux,sector,in))RtsP4Fault(62);}
@@ -44,13 +44,13 @@ static void blit(void* user,unsigned slot,u16* out,unsigned stride,unsigned x,un
  (void)user;if(!(ui.previews&(1u<<slot)))return;for(u32 sector=0;sector<20;++sector){auxRead(metaSector(slot)+1+sector,gRtsM2.readback);const u16* in=(const u16*)gRtsM2.readback;
   for(u32 i=0;i<256;++i){u32 index=sector*256+i;if(index<4800)out[(y+index/80)*stride+x+index%80]=in[i];}}
 }
-static void render(void){RtsMenuRender(&ui.menu,FB,blit,0,0);}
+static void render(void){RtsMenuRenderUpdate(&ui.menu,FB,&ui.paint,blit,0,0);}
 int RtsMenuRuntimeOpen(void)
 {
  if(gRtsMenuBoot.magic!=RTS_MENU_BOOT_MAGIC)return RTS_MENU_RESUME;
  ui.display=gRtsM2.oldDisplay;ui.mainBright=gRtsP4Scratch.video.brightness[0];ui.subBright=gRtsP4Scratch.video.brightness[1];
  ui.power=R16(0x04000304);ui.bankC=gRtsM2.oldVramC;ui.bankD=R8(0x04000243);
- RtsMenuInit(&ui.menu,gRtsMenuBoot.debug);ui.active=1;ui.captureBank=2;ui.previews=0;
+ RtsMenuInit(&ui.menu,gRtsMenuBoot.debug);ui.active=1;ui.captureBank=2;ui.previews=0;ui.paint.initialized=0;
  rtsP4Request(6,0);
  // Capture into C when it belongs to the sub engine or is unused; otherwise
  // prefer D if it is not a main BG/OBJ/texture source. Both banks are preserved.
@@ -69,6 +69,8 @@ int RtsMenuRuntimeOpen(void)
  for(unsigned i=0;i<4;++i){if(!RtsMenuRawRead(&gRtsMenuBoot.slots[i],0,gRtsM2.readback))RtsP4Fault(64);
   const RtsM2Header* h=(const RtsM2Header*)gRtsM2.readback;
   if(h->magic!=RTS_P4_MAGIC || h->version!=RTS_P4_VERSION || h->gameCode!=gRtsM2.info.gameCode || h->phase!=2 || h->error)continue;
+  unsigned compatible=1;for(unsigned k=0;k<16;++k)if(h->reserved[62+k]!=((const u32*)&gRtsP4Identity)[k]){compatible=0;break;}
+  if(!compatible)continue;
   u32 sequence=h->sequence;ui.menu.slots[i].occupied=1;auxRead(metaSector(i),gRtsM2.readback);
   const RtsMenuMetadata* m=(const RtsMenuMetadata*)gRtsM2.readback;
   if(m->magic==RTS_MENU_META_MAGIC && m->version==1 && m->gameCode==gRtsM2.info.gameCode && m->sequence==sequence){ui.menu.slots[i].time=m->time;if(m->hasThumbnail)ui.previews|=1u<<i;}
@@ -93,13 +95,13 @@ void RtsMenuRuntimeProgress(u32 stage,u32 value)
 {
  if(!ui.active)return;
  if(stage==8 || stage==9){char line[]="ERROR 0000   PRESS B";for(unsigned i=0;i<4;++i){line[9-i]='0'+value%10;value/=10;}ui.menu.phase=RTS_MENU_BUSY;
-  ui.menu.debug_enabled=1;RtsMenuRender(&ui.menu,FB,0,0,line);return;}
+  ui.menu.debug_enabled=1;RtsMenuRenderUpdate(&ui.menu,FB,&ui.paint,0,0,line);return;}
  u32 total=RTS_M2_PAYLOAD_BYTES/512;
  if(gRtsP4.operation){if(stage==1)RtsMenuSetProgress(&ui.menu,value,total*2);if(stage==2)RtsMenuSetProgress(&ui.menu,value+(gRtsP4LoadVerify ? total : 0),total*(gRtsP4LoadVerify ? 2 : 1));}
  else{int full=!(gRtsM2.header.flags&RTS_M2_FLAG_NO_READBACK);if(stage==5)RtsMenuSetProgress(&ui.menu,value,total*(full ? 2 : 1));if(stage==6)RtsMenuSetProgress(&ui.menu,total+(full ? value : 0),total*(full ? 2 : 1));if(stage>=7)RtsMenuSetProgress(&ui.menu,1,1);}
  char line[]="DEBUG S0 0000";line[6]=gRtsP4.operation?'L':'S';line[7]='0'+stage;
  for(unsigned i=0;i<4;++i){line[12-i]='0'+value%10;value/=10;}
- RtsMenuRender(&ui.menu,FB,0,0,line);
+ RtsMenuRenderUpdate(&ui.menu,FB,&ui.paint,0,0,line);
 }
 void RtsMenuRuntimeSaved(u32 sequence)
 {

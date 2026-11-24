@@ -19,7 +19,7 @@ def fresh(debug=1):
  m=Menu();lib.RtsMenuInit(C.byref(m),debug);return m
 def tick(m,key):return lib.RtsMenuTick(C.byref(m),key)
 def press(m,key):tick(m,0);return tick(m,key)
-m=fresh();assert tick(m,0x301)==0 and m.phase==0;assert tick(m,1)==0 and m.phase==0
+m=fresh();assert tick(m,0x304)==0 and m.phase==0;assert tick(m,4)==0 and m.phase==0
 tick(m,0);press(m,1);assert m.phase==1 and m.action==1
 for _ in range(100):assert tick(m,1)==0 and m.phase==1
 assert press(m,1)==1 and m.phase==2

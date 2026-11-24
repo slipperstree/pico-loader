@@ -168,8 +168,8 @@ if MENU:
     bootOffset=int(next(line.split('=')[1].strip().rstrip(';') for line in (folder/'RtsM2Image.h').read_text().splitlines() if 'RTS_MENU_BOOT_OFFSET =' in line),16)
     assert bytes(u.mem_read(worker+bootOffset,296))==menu[:8]+menu[8+4*288:]
     hotkey=hook+symbols['rts7_hotkey']-symbols['__start_patch_rts7']
-    assert struct.unpack('<I',u.mem_read(hotkey,4))[0]==0x301
-    report['menu_boot_transfer']='PASS';report['menu_hotkey']='L+R+A'
+    assert struct.unpack('<I',u.mem_read(hotkey,4))[0]==0x304
+    report['menu_boot_transfer']='PASS';report['menu_hotkey']='L+R+Select'
 report['clock']=hex(clock)
 report['workspace_bytes']=meta['memory_bytes']
 if P4:report.update({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256((folder/'worker.bin').read_bytes()).hexdigest()})

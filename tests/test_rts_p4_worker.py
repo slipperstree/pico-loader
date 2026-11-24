@@ -31,7 +31,7 @@ extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,
 slot_physical=[physical,*[list(range(0x11000+i*0x4000,0x11000+i*0x4000+sectors)) for i in range(3)]]
 aux_physical=list(range(0x1d000,0x1d000+756))
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False,verify_load=False,scene_change=False,audio_fallback=False,game_code=0x4a473241,menu_slot=0,menu_cancel=False,menu_debug=True):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False,verify_load=False,scene_change=False,audio_fallback=False,game_code=0x4a473241,menu_slot=0,menu_cancel=False,menu_debug=True,legacy_menu=False):
  physical=slot_physical[menu_slot] if MENU else globals()['physical']
  allowed=set(sum(slot_physical,[])+aux_physical) if MENU else set(physical)
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
@@ -70,7 +70,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    if layout[0] not in disk:disk[layout[0]]=bytes(blank)
   selected_header=words(disk.get(physical[0],bytes(blank)))
   inputs=[0]+[key for _ in range(menu_slot) for key in (16,0)]
-  inputs+=([2,0] if menu_cancel else [1,0]+([64,0] if not load and selected_header[4]==2 else [])+[1,0])
+  inputs+=([1,0,2,0,2,0] if legacy_menu else [2,0] if menu_cancel else [1,0]+([64,0] if not load and selected_header[4]==2 else [])+[1,0])
  config+=[0]*(72-len(config));config[6]=game_code;put(u,cfg,*config,base,meta['memory_bytes']);put(u,cfg+296+76,6)
  if early_refusal:put(u,cfg+36,0x400)
  if refusal=='sd_busy':put(u,cfg+28,4096)
@@ -319,6 +319,12 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    cpu.reg_write(UC_ARM_REG_R0,1);cpu.reg_write(UC_ARM_REG_PC,cpu.reg_read(UC_ARM_REG_LR))
   u.hook_add(UC_HOOK_CODE,genericIo,True,begin=syms['writeFileSector'],end=syms['writeFileSector'])
   u.hook_add(UC_HOOK_CODE,genericIo,False,begin=syms['readFileSector'],end=syms['readFileSector'])
+ if MENU and legacy_menu:
+  def legacyPaint(cpu,a,n,d):
+   menu=cpu.reg_read(UC_ARM_REG_R0)
+   assert cpu.mem_read(menu,1)[0]==0,'Legacy checkpoint was advertised as loadable'
+   if cpu.mem_read(menu+54,1)[0]==1:assert cpu.mem_read(menu+53,1)[0]==1,'Legacy checkpoint offered Load'
+  u.hook_add(UC_HOOK_CODE,legacyPaint,begin=syms['RtsMenuRenderUpdate'],end=syms['RtsMenuRenderUpdate'])
  if MENU and '--skip-progress-render' in sys.argv:
   def skipBusy(cpu,a,n,d):
    menu=cpu.reg_read(UC_ARM_REG_R0)
@@ -464,6 +470,10 @@ if MENU and '--menu-cancel-only' in sys.argv:
  (f/'menu-full-transport-results.json').write_text(json.dumps({'cancel':'PASS','actual_sd_commands':'PASS','physical_hardware':False}))
  raise SystemExit(0)
 if MENU:
+ legacy=dict(disk);header=bytearray(legacy[physical[0]]);header[432]^=1;legacy[physical[0]]=bytes(header);before=legacy[physical[0]]
+ make(legacy,menu_cancel=True,legacy_menu=True)
+ assert legacy[physical[0]]==before
+ print('PASS legacy build shows Empty/Save only without modifying its snapshot',flush=True)
  print('Executing P6 cross-boot menu restore...',flush=True);make(disk,True,True,scene_change=True,menu_debug=False)
  make(disk,menu_cancel=True)
  for slot in (1,2,3):
@@ -472,7 +482,7 @@ if MENU:
   m=words(disk[aux_physical[532+slot*21]])
   assert m[:4]==(0x31544d52,1,0x4a473241,1)
   assert disk[aux_physical[532+slot*21]][16:24]==struct.pack('<H6B',2026,11,24,16,23,45,0)
- (f/'p6-model-results.json').write_text(json.dumps({'menu_save_restore_four_slots':'PASS','cross_boot_and_changed_scene':'PASS','cancel_vram_audio_restore':'PASS','metadata_timestamp':'PASS','debug_off':'PASS','worker_bytes':meta['memory_bytes'],'physical_hardware':False},indent=2))
+ (f/'p6-model-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'legacy_slot_not_loadable':'PASS','menu_save_restore_four_slots':'PASS','cross_boot_and_changed_scene':'PASS','cancel_vram_audio_restore':'PASS','metadata_timestamp':'PASS','debug_off':'PASS','worker_bytes':meta['memory_bytes'],'physical_hardware':False},indent=2))
  print('PASS P6 integrated four-slot menu model',flush=True);raise SystemExit(0)
 if '--audio-fallback-only' in sys.argv:
  disk={physical[0]:bytes(blank)};struct.pack_into('<I',blank,12,0x454d4147);disk[physical[0]]=bytes(blank)

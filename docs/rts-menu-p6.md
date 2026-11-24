@@ -7,7 +7,7 @@ payload verification pass.
 
 ## Controls and files
 
-Hold **L+R+A** for approximately half a second, then release the buttons. The
+Hold **L+R+Select** for approximately half a second, then release the buttons. The
 menu pauses both CPUs, mutes master output, and uses a black lower screen with
 four white slot frames. Left/right traverse all four slots with wrap-around;
 up/down change rows. A opens actions, then confirms the highlighted action.
@@ -30,8 +30,10 @@ Each slot keeps the P4/P5 payload format and per-ROM identity. Creating all
 four files reserves roughly 20 MB per game and adds work to its first launch.
 Existing files are not truncated. A foreign file, wrong size, insufficient
 space or excessive fragmentation disables installation rather than replacing
-the conflicting file. Preexisting P5 snapshots have a different code/build
-identity and must be recreated in P6 before they can be loaded.
+the conflicting file. Preexisting P5/P6.0 snapshots have a different code/build identity and must be
+recreated in P6.1 before they can be loaded. Slot discovery compares the same
+code/build identities that loading requires. Incompatible files are preserved
+but displayed as Empty with Save only; they are not advertised as loadable.
 
 Thumbnails are 80x60 RGB555 samples of the **main graphics engine**. This can
 represent either physical screen. Capture chooses bank C or D when it is not
@@ -47,6 +49,29 @@ successful-install prompt and progress diagnostics. The progress bar and
 percentage remain visible. Errors still show a code and a B acknowledgement
 where returning to the current game is safe. Existing save/load verification
 settings remain independent; load remains a single payload pass by default.
+
+## P6.1 dirty painting and field feedback
+
+The user reports that P6.0 basic save/load works, while navigation flickers and
+an older slot can appear occupied without date/preview metadata. P6.1 fixes
+these UI behaviors and changes the hotkey to **L+R+Select** (`0x0304`). Full
+painting remains limited to opening the menu and changing whole-screen modes.
+The RAM paint cache preserves thumbnails and static slot frames. Navigation
+changes only selection outlines; action toggles recolor their text. Progress
+fills only newly completed columns, replaces percentage pixels directly, and
+updates only changed diagnostic characters. No thumbnail sector reads occur
+when moving selection or opening/toggling/backing out of Save/Load.
+
+Native tests compare incremental frames against independently requested full
+frames across masks, navigation, actions, progress increases/decreases and
+debug changes. Sentinel pixels verify that the completed bar and unrelated
+static regions remain untouched. Integration tests cover incompatible-slot
+discovery without modifying that file and retain the 20 KiB worker bound.
+
+Screenshot policy is unchanged in P6.1: main-engine capture, not fixed upper
+screen or dual-screen capture. Display capture supports engine A only; its
+blend mode combines engine A with VRAM/FIFO data, not the final engine-B output.
+See [GBATEK](https://mgba-emu.github.io/gbatek/#ds-video-capture-and-main-memory-display-mode).
 
 ## Resident worker and transient overlay
 

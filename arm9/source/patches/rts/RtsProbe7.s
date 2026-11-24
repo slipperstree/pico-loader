@@ -317,7 +317,7 @@ rts7_ime: .word 0x04000208
 rts7_vcount: .word 0x04000006
 rts7_hotkey:
 #ifdef PICO_RTS_MENU
-.word 0x301
+.word 0x304
 #else
 .word 0x381
 #endif

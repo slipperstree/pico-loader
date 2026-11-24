@@ -366,7 +366,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
 #else
 #ifdef PICO_RTS_LIVE_RESTORE
 #ifdef PICO_RTS_MENU
-    if(gRtsMenuLoaderBoot.debug)rtsProbeMessage("RTS P6: four-slot S/L Menu\nHold L+R+A to open.\nD-pad: slot, A: actions\nB: back / return to game\nResave after version change.");
+    if(gRtsMenuLoaderBoot.debug)rtsProbeMessage("RTS P6.1: four-slot S/L Menu\nHold L+R+Select to open.\nD-pad: slot, A: actions\nB: back / return to game\nResave after version change.");
 #else
     rtsProbeMessage("RTS P5.0: automatic SDK hooks\nSave: L+R+Down+A\nLoad: L+R+Down+B\nLoad CRC optional, default off.\nResave after version change.");
 #endif

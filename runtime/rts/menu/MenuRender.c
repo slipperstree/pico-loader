@@ -60,3 +60,79 @@ void RtsMenuRender(const RtsMenu* m,uint16_t p[256*192],RtsMenuBlit blit,void* u
   if(m->slots[m->selected].occupied)text(p,x,y+10,"Load",m->action==RTS_MENU_LOAD ? GREEN : WHITE,1);
  }
 }
+
+// Dirty painting keeps thumbnails and static borders intact during navigation.
+static void opaqueCell(uint16_t* p,int x,int y,char c,unsigned color,unsigned scale)
+{
+ const uint8_t* bits=0;
+ for(unsigned i=0;i<sizeof(font)/sizeof(font[0]);++i)if(font[i].c==c){bits=font[i].bits;break;}
+ for(unsigned cx=0;cx<6;++cx)for(unsigned cy=0;cy<7;++cy)
+  fill(p,x+cx*scale,y+cy*scale,scale,scale,bits && cx<5 && (bits[cx]&(1u<<cy)) ? color : BLACK);
+}
+static void centeredField(uint16_t* p,int x,int y,unsigned width,const char* s,unsigned scale)
+{
+ unsigned n=0;while(s[n])++n;
+ unsigned used=n*6*scale,left=(width-used)/2;
+ fill(p,x,y,left,7*scale,BLACK);
+ for(unsigned i=0;i<n;++i)opaqueCell(p,x+left+i*6*scale,y,s[i],WHITE,scale);
+ fill(p,x+left+used,y,width-left-used,7*scale,BLACK);
+}
+static void selection(uint16_t* p,unsigned slot,unsigned color)
+{rect(p,(slot&1 ? 144 : 16)-2,(slot>=2 ? 107 : 20)-2,86,66,color);}
+static void actionText(const RtsMenu* m,uint16_t* p,int clear)
+{
+ int x=(m->selected&1 ? 144 : 16)+84,y=(m->selected>=2 ? 107 : 20)-3;
+ if(clear){fill(p,x,y,24,17,BLACK);return;}
+ text(p,x,y,"Save",m->action==RTS_MENU_SAVE ? GREEN : WHITE,1);
+ if(m->slots[m->selected].occupied)text(p,x,y+10,"Load",m->action==RTS_MENU_LOAD ? GREEN : WHITE,1);
+}
+static int slotChanged(const RtsMenuSlot* a,const RtsMenuSlot* b)
+{
+ const uint8_t* x=(const uint8_t*)a;const uint8_t* y=(const uint8_t*)b;
+ for(unsigned i=0;i<sizeof(*a);++i)if(x[i]!=y[i])return 1;
+ return 0;
+}
+static void repaintSlot(const RtsMenu* m,uint16_t* p,unsigned i,RtsMenuBlit blit,void* user)
+{
+ int x=i&1 ? 144 : 16,y=i>=2 ? 107 : 20;
+ fill(p,x+1,y+1,80,60,BLACK);fill(p,x,y+64,82,17,BLACK);
+ if(m->slots[i].occupied){if(blit)blit(user,i,p,256,x+1,y+1);
+  char date[11],clock[9];RtsMenuFormatTime(&m->slots[i].time,date,clock);
+  text(p,x+11,y+64,date,WHITE,1);text(p,x+17,y+74,clock,WHITE,1);
+ }else text(p,x+26,y+27,"Empty",WHITE,1);
+}
+void RtsMenuRenderUpdate(const RtsMenu* m,uint16_t p[256*192],RtsMenuPaint* cache,RtsMenuBlit blit,void* user,const char* debug)
+{
+ RtsMenu* old=&cache->previous;
+ int modal=m->phase>=RTS_MENU_BUSY,wasModal=old->phase>=RTS_MENU_BUSY;
+ int full=!cache->initialized || modal!=wasModal || (modal && m->phase!=old->phase);
+ char line[32];unsigned ended=!m->debug_enabled || !debug;
+ for(unsigned i=0;i<sizeof(line);++i){if(!ended && (!debug[i] || i==sizeof(line)-1))ended=1;line[i]=ended ? 0 : debug[i];}
+ if(full)RtsMenuRender(m,p,blit,user,line);
+ else if(m->phase==RTS_MENU_BUSY)
+ {
+  if(m->action!=old->action)centeredField(p,107,66,42,m->action==RTS_MENU_LOAD ? "Loading" : "Saving",1);
+  if(m->percent!=old->percent)
+  {
+   unsigned before=206u*old->percent/100,after=206u*m->percent/100;
+   if(after>before)fill(p,25+before,93,after-before,16,GREEN);
+   else if(after<before)fill(p,25+after,93,before-after,16,BLACK);
+   char value[5];unsigned n=0;if(m->percent==100)value[n++]='1';if(m->percent>=10)value[n++]='0'+(m->percent/10)%10;
+   value[n++]='0'+m->percent%10;value[n++]='%';value[n]=0;centeredField(p,104,121,48,value,2);
+  }
+  for(unsigned i=0;i<sizeof(line)-1;++i)if(line[i]!=cache->debug[i])opaqueCell(p,4+i*6,177,line[i] ? line[i] : ' ',WHITE,1);
+ }
+ else if(m->phase!=RTS_MENU_CLOSED)
+ {
+  int moved=m->selected!=old->selected;
+  int actionsChanged=moved || m->phase!=old->phase || m->action!=old->action || slotChanged(&m->slots[m->selected],&old->slots[old->selected]);
+  if(old->phase==RTS_MENU_ACTIONS && (moved || m->phase!=RTS_MENU_ACTIONS || m->slots[m->selected].occupied!=old->slots[old->selected].occupied))actionText(old,p,1);
+  if(moved){selection(p,old->selected,BLACK);selection(p,m->selected,GREEN);}
+  for(unsigned i=0;i<4;++i)if(slotChanged(&m->slots[i],&old->slots[i]))repaintSlot(m,p,i,blit,user);
+  if(m->phase==RTS_MENU_ACTIONS && actionsChanged)actionText(m,p,0);
+ }
+ volatile uint8_t* saved=(volatile uint8_t*)&cache->previous;const uint8_t* current=(const uint8_t*)m;
+ for(unsigned i=0;i<sizeof(*m);++i)saved[i]=current[i];
+ for(unsigned i=0;i<sizeof(line);++i)cache->debug[i]=line[i];
+ cache->initialized=1;
+}
