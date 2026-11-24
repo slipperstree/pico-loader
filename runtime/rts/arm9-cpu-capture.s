@@ -246,3 +246,24 @@ rtsFlushCachesAndEnter:
     mcr p15,0,r5,c3,c0,0
     mcr p15,0,r6,c1,c0,0
     ldmia sp!,{r4-r8,pc}
+
+// Exact IPC boundary. D-cache and write buffer are already off.
+// r0 is disposable CPU-record scratch for optional stackless stamps.
+.section .text.rtsP4SendStart7,"ax"
+.global rtsP4SendStart7
+.type rtsP4SendStart7,%function
+rtsP4SendStart7:
+    cpu_trace 43
+    mov r12,#0x04000000
+    add r12,r12,#0x180
+    ldrh r1,[r12]
+    cpu_trace 44
+    // Preserve IRQ-enable only; never echo send-IRQ bit 13.
+    and r1,r1,#0x4000
+    orr r1,r1,#0x800
+    strh r1,[r12]
+    cpu_trace 45
+    ldrh r1,[r12]
+    and r0,r1,#0xf00
+    bx lr
+.ltorg

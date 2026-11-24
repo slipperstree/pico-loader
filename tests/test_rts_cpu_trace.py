@@ -50,3 +50,27 @@ def run(folder,trace):
 plain=run('rts-worker-p4',False);traced=run('rts-worker-p43',True)
 assert plain==traced,'Tracing changed CPU state record'
 print('PASS all 28 compiled trace stamps, readable 0028 glyphs, identical 512-byte CPU record, unchanged mode stacks/callee registers')
+
+# The actual IPC leaf must not depend on stack contents or saved C registers.
+f=r/'build/rts-worker-p43';m=__import__('json').loads((f/'RtsM2Image.json').read_text())
+syms={p[2]:int(p[0],16) for l in subprocess.check_output([prefix+'nm',str(f/'worker.elf')],text=True).splitlines() if len(p:=l.split())==3}
+for irq in (0,0x4000):
+ for peer in range(16):
+  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946)
+  for a,n in ((0x02000000,0x400000),(0x04000000,0x1000),(0x06840000,0x20000)):u.mem_map(a,n)
+  u.mem_write(m['link_base'],(f/'worker.bin').read_bytes());ctx=0x023f4000;done=0x02008000
+  u.mem_write(0x04000180,struct.pack('<H',irq|0x2a00|peer));events=[];writes=[]
+  def code(cpu,a,n,d):
+   if a==syms['rtsCpuTraceDigit']:events.append(cpu.reg_read(UC_ARM_REG_R3))
+   if a==done:cpu.emu_stop()
+  def write(cpu,ac,a,n,v,d):
+   if a==0x04000180:assert n==2;writes.append(v)
+   else:assert ctx<=a and a+n<=ctx+512 or 0x06840000<=a<0x06841000,('Leaf touched stack/game data',hex(a))
+  u.hook_add(UC_HOOK_CODE,code);u.hook_add(UC_HOOK_MEM_WRITE,write)
+  u.reg_write(UC_ARM_REG_CPSR,0xdf);u.reg_write(UC_ARM_REG_SP,0x023f2000);u.reg_write(UC_ARM_REG_LR,done|1);u.reg_write(UC_ARM_REG_R0,ctx)
+  for i,reg in enumerate(regs[4:12]):u.reg_write(reg,0x12340004+i)
+  u.emu_start(syms['rtsP4SendStart7'],0,count=10000)
+  assert u.reg_read(UC_ARM_REG_PC)==done and u.reg_read(UC_ARM_REG_SP)==0x023f2000
+  assert u.reg_read(UC_ARM_REG_R0)==0x800 and writes==[irq|0x800] and events==[43,44,45]
+  assert [u.reg_read(x) for x in regs[4:12]]==list(range(0x12340004,0x1234000c))
+print('PASS 32 actual IPC leaf cases: stackless stamps 43/44/45, halfword transfer/readback, IRQ control, callee-saved ABI')

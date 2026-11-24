@@ -10,6 +10,28 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.5: distinguish the C renderer return from the IPC transfer
+
+Hardware P4.4 last showed S2 0041. This precedes the waiting loop and its
+deadline. The display is updated inside the renderer; this does not prove
+that the renderer returned or ARM7 saw start 8. The exact cause is unknown.
+M3.2 used the original private-WRAM capture server; P4 changes the protocol,
+stack, audio/FIFO preflight and CPU capture. Working save behavior regressed;
+this does not establish a hardware limitation or general ARM7 failure.
+
+The IPC transfer now uses an ARM leaf with no stack use, C call or callee-saved
+register dependence. Optional stackless stamps are S2 0043 (entered after
+C renderer returned), 0044 (IPCSYNC read completed), and 0045 (write completed).
+Only IRQ-enable bit 14 is retained when publishing 8. A separate readback
+checks the local outgoing nibble and holds with 8128 if it does not latch.
+The subsequent C marker is still 0042: these IDs are not monotonic progress.
+
+Tests execute the actual leaf with both IRQ-enable states and all 16 incoming
+nibbles, verifying its halfword transfer, trace order and callee-saved ABI.
+The combined worker executes its ARM/Thumb veneer. Local models do not
+reproduce physical bus stalls and do not prove a physical fix.
+This remains save-only, with the same format and basename.
+
 ## P4.4: bound the cache-off ARM7 start and expose peer checkpoints
 
 Hardware P4.3 reached S2 0033: CPU capture and the fused cache transition

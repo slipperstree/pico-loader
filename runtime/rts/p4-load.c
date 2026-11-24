@@ -33,7 +33,8 @@ u32 rtsP4Start7(void)
 #ifdef PICO_RTS_CPU_TRACE
     RtsP4Progress(2,41);
 #endif
-    R16(0x04000180)=(R16(0x04000180)&~0xf00u)|0x800;
+    if(rtsP4SendStart7((RtsArm9CpuState*)gRtsM2.readback)!=0x800)
+        RtsP4Fault(8128); // Local outgoing nibble must latch before waiting.
 #ifdef PICO_RTS_CPU_TRACE
     RtsP4Progress(2,42);
 #endif

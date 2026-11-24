@@ -22,7 +22,7 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False):
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -156,6 +156,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   if a==0x04000188:fifo7.append(val)
   elif a==0x04000180:
    state['own']=(val>>8)&15
+   if ipc_unlatched and state['own']==8:state['own']=10;return
    if state['own']==8:
     assert not cp[(1,0,0)]&4 and (2,0) in state['stages'],'ARM7 started before visible feedback/cache off'
     if not arm7_unready:
@@ -216,6 +217,9 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert state['done'] and not state['fault'] and not state['writes'] and not state['readcount'] and not state['rpc']
   assert (8,256) in state['stages'] and 8!=state['own'] and fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa]
   print('PASS refusal before start: no SD, no unstarted FIFO replay, current game resumes',flush=True);return state
+ if ipc_unlatched:
+  assert state['fault']==8128 and not state['done'] and not state['writes'] and not state['rpc']
+  print('PASS outgoing IPC nibble not latched -> S9 8128 before ARM7 wait or card I/O',flush=True);return state
  if arm7_unready:
   assert state['fault']==(8112 if TRACE else 81) and not state['done'] and not state['writes'] and (0,0) in state['stages'] and (2,0) in state['stages']
   print('PASS missing ARM7 pause-ready -> visible S0/S2 then bounded S9 timeout, no card writes',flush=True);return state
@@ -264,7 +268,8 @@ else:
 if TRACE:
  make(disk,True,True)
  make({physical[0]:bytes(blank)},arm7_unready=True)
- (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','physical_hardware':False},indent=2))
+ make({physical[0]:bytes(blank)},ipc_unlatched=True)
+ (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','physical_hardware':False},indent=2))
  print('PASS trace save, load disabled with no card writes, ready timeout',flush=True);raise SystemExit(0)
 print('Executing independent boot / mutated-state P4 restore...',flush=True);b=make(disk,True,True);print('PASS independent runtime instance: validated file -> main/TCM/WRAM/video/audio + ARM9/ARM7 continuation',flush=True)
 if '--restore-only' in sys.argv:

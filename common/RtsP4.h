@@ -39,6 +39,7 @@ void rtsP4Arm7Begin(uint32_t originalIpc);
 void rtsP4Arm7Entry(void);
 void rtsP4Arm7Loop(uint32_t originalIpc,uint32_t operation);
 uint32_t rtsP4Start7(void);
+uint32_t rtsP4SendStart7(RtsArm9CpuState*);
 uint32_t rtsP4Load(const RtsP4CardState*);
 void rtsP4InvalidateLine(uint32_t);
 uint32_t rtsP4GetControl(void);
