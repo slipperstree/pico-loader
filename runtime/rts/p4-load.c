@@ -14,6 +14,11 @@ static struct {u32 replayed,drained9,started7;} own __attribute__((aligned(32)))
 static const u32 vramControl[9]={0x04000240,0x04000241,0x04000242,0x04000243,0x04000244,0x04000245,0x04000246,0x04000248,0x04000249};
 static const u32 vramEnd[9]={0x20000,0x40000,0x60000,0x80000,0x90000,0x94000,0x98000,0xa0000,0xa4000};
 static void checkedRead(u32 sector,u32* out){if(!RtsP4ReadSector(sector,out))RtsP4Fault(1);}
+#ifdef PICO_RTS_GENERIC_SOUND
+#define buildSound RtsBuildSoundRestartOrMute
+#else
+#define buildSound RtsBuildSoundRestart
+#endif
 static int same(const void* a,const void* b,u32 n)
 {const u8* x=a;const u8* y=b;for(u32 i=0;i<n;++i)if(x[i]!=y[i])return 0;return 1;}
 static void zero(void* p,u32 n){u32* d=p;for(u32 i=0;i<n/4;++i)d[i]=0;}
@@ -139,8 +144,14 @@ u32 rtsP4FreezePayload(void)
 {
     if(gRtsP4.error)return gRtsP4.error;
     const u32* io=gRtsSoundShadow.reserved;
+
+#ifdef PICO_RTS_GENERIC_SOUND
+    if(io[26]&0x8080)return 4306; // Active capture writes RAM independently of the paused CPUs.
+    if(RtsBuildSoundRestartOrMute(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],0))return 4302;
+#else
     u32 detail=0;
     if(RtsBuildSoundRestartDetailed(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],0,&detail))return detail;
+#endif
     rtsP4Drain9();if(gRtsP4.error)return gRtsP4.error;
     RtsVideoCapture* v=&gRtsP4Scratch.video;
     for(u32 i=0;i<16;++i)v->reserved[i]=R32(0x04000640+i*4);
@@ -194,7 +205,7 @@ u32 rtsP4Load(const RtsP4CardState* card)
     checkedRead(0,s->readback);RtsM2Header* old=(RtsM2Header*)s->readback;
     if(old->magic==RTS_P4_MAGIC && old->version==RTS_P4_VERSION && old->phase!=2)return 1001;
     if(old->magic!=RTS_P4_MAGIC || old->version!=RTS_P4_VERSION || old->fileBytes!=RTS_P4_FILE_BYTES || old->payloadBytes!=RTS_P4_PAYLOAD_BYTES ||
-       old->gameCode!=RTS_M2_GAME || old->phase!=2 || old->error || (old->flags!=4 && old->flags!=6) || headerCrc(old)!=old->reserved[82])return 1002;
+       old->gameCode!=s->info.gameCode || old->phase!=2 || old->error || (old->flags!=4 && old->flags!=6) || headerCrc(old)!=old->reserved[82])return 1002;
     if(!same(old->reserved+62,&gRtsP4Identity,32))return 1003;
     if(!same(old->reserved+70,gRtsP4Identity.build,32))return 1009;
     if(old->workspaceBase!=s->base || old->workspaceBytes!=s->bytes || !gRtsP4TailAddress ||
@@ -228,7 +239,7 @@ u32 rtsP4Load(const RtsP4CardState* card)
     // Internal 3D and unobserved write-only state remain incomplete.
     checkedRead(1+RTS_P4_SOUND_OFFSET/512,s->readback);memcpy(&gRtsP4Scratch.sound,s->readback,512);
     const u32* io=gRtsP4Scratch.sound.reserved;
-    if(RtsBuildSoundRestart(&gRtsP4Scratch.sound,io,io[16]&65535,io[16]>>16,io[26],0))return 1006;
+    if(buildSound(&gRtsP4Scratch.sound,io,io[16]&65535,io[16]>>16,io[26],0))return 1006;
     // Destructive phase: transport failure now holds both CPUs, never resumes a
     // partly restored game. All code and stacks executing here are in workspace.
     restoreDtcm(h->dtcmConfig); // Worker code and stack are in main RAM.
@@ -255,7 +266,7 @@ u32 rtsP4Load(const RtsP4CardState* card)
     restoreTimers9(h,v);
     finishDisplay((const RtsVideoCapture*)cpu->padding);
     io=gRtsSoundShadow.reserved;
-    if(RtsBuildSoundRestart(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],&gRtsP4Scratch.plan))RtsP4Fault(8040);
+    if(buildSound(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],&gRtsP4Scratch.plan))RtsP4Fault(8040);
     rtsP4Request(4,0);send7();rtsP4Request(3,0);
     R32(0x040001a8)=card->command0;R32(0x040001ac)=card->command1;R16(0x040001a0)=card->aux;
     R32(0x040001a4)=card->cardControl&0x7f7fffff;

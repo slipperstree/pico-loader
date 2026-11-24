@@ -54,7 +54,7 @@ if 'gRtsP4Pointers' in symbols:
     import hashlib
     assert end-base<=0x5000, 'P4 exceeds the first-target reserved workspace'
     fingerprint=hashlib.sha256(blob+struct.pack('<I',end-base))
-    for name in ('arm9/source/patches/rts/RtsProbe.cpp','arm9/source/patches/rts/RtsProbe7.s','arm9/source/patches/rts/RtsProbe9.s','arm9/source/patches/rts/RtsSoundHooks7.s','common/RtsP4.h','common/RtsP4Profile.h','common/RtsSnapshotInfo.h','common/RtsSavePath.c','common/RtsSha256.c','arm7/source/loader/NdsLoader.cpp','arm7/source/loader/RtsSnapshotPrepare.cpp'):
+    for name in ('arm9/source/patches/rts/RtsSdkSound.h','arm9/source/patches/rts/RtsProbe.cpp','arm9/source/patches/rts/RtsProbe7.s','arm9/source/patches/rts/RtsProbe9.s','arm9/source/patches/rts/RtsSoundHooks7.s','common/RtsP4.h','common/RtsP4Profile.h','common/RtsSnapshotInfo.h','common/RtsSavePath.c','common/RtsSha256.c','arm7/source/loader/NdsLoader.cpp','arm7/source/loader/RtsSnapshotPrepare.cpp'):
         fingerprint.update(Path(name).read_bytes())
     text+=f'inline constexpr uint32_t RTS_P4_POINTERS_OFFSET = 0x{symbols["gRtsP4Pointers"]-base:x};\n'
     text+=f'inline constexpr uint32_t RTS_P4_TAIL_BYTES = 0x{symbols["rtsArm9RestoreTailEnd"]-symbols["rtsArm9RestoreTail"]:x};\n'

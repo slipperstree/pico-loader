@@ -65,6 +65,17 @@ int RtsBuildSoundRestart(const RtsSoundShadow* s,const u32 controls[16],u32 mast
 {
     return RtsBuildSoundRestartDetailed(s,controls,master,bias,capture,out,0);
 }
+int RtsBuildSoundRestartOrMute(const RtsSoundShadow* s,const u32 controls[16],u32 master,u32 bias,u32 capture,RtsSoundRestartPlan* out)
+{
+    if(!s || s->magic!=RTS_SOUND_SHADOW_MAGIC || s->version!=1 || (capture&0x8080))return 1;
+    if(!RtsBuildSoundRestart(s,controls,master,bias,capture,out))return 0;
+    if(out)
+    {
+        u32* p=(u32*)out;for(u32 i=0;i<128;++i)p[i]=0;
+        out->magic=RTS_SOUND_PLAN_MAGIC;out->version=1;out->master=master&65535;out->bias=bias&1023;
+    }
+    return 0; // Unsupported sound becomes muted playback, not a rejected state.
+}
 void RtsPrepareSoundRestart(const RtsSoundRestartPlan* p,RtsSoundWrite write,void* user)
 {
     if(!p || !write || p->magic!=RTS_SOUND_PLAN_MAGIC || p->version!=1)return;

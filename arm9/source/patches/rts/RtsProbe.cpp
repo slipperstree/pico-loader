@@ -27,6 +27,12 @@ static u32* sM2EntryAtTarget;
 #ifdef PICO_RTS_RESTORE_PROBE
 #include "RtsP4.h"
 #include "RtsP4Profile.h"
+#ifdef PICO_RTS_GENERIC_SOUND
+#include "RtsSdkSound.h"
+DEFINE_SECTION_SYMBOLS(patch_rtsSoundStore);
+extern RtsP4Identity gRtsP4LoaderIdentity;
+extern "C" {void rtsSoundStoreHook();extern u32 rtsSoundStoreObserve,rts7_operation_address,rts7_begin_address,rts7_loop_address,rts7_restore_tail;}
+#else
 extern RtsP4Identity gRtsP4LoaderIdentity;
 extern "C" u32 rts7_operation_address,rts7_begin_address,rts7_loop_address;
 #ifdef PICO_RTS_LIVE_RESTORE
@@ -42,6 +48,7 @@ extern u32 rtsSoundPcmBusy,rtsSoundPcmObserve,rtsSoundPcmResume;
 extern u32 rtsSoundTimerBusy,rtsSoundTimerObserve,rtsSoundTimerResume,rtsSoundExitBusy;
 extern u32 rtsSoundReloadObserve;
 }
+#endif
 static u8* sP4Tail;
 #endif
 #endif
@@ -85,10 +92,8 @@ void InstallRtsProbeArm9(PatchContext& context, const nds_header_ntr_t* header, 
 #endif
 #endif
     sWaitHooks = 0;
-    // First hardware target only: the user's AA2 Japanese/CJK ROM (A2GJ).
-    if (header->gameCode != GAMECODE("A2GJ") || header->unitCode != 0 ||
-        context.GetSdkVersion() != SdkVersion(0x03017532) || imageBytes < 0x800)
-        return;
+    // DS-mode games are recognized by their actual patchable code, not title.
+    if(imageBytes<0x800)return;
     void* originals[] = { SECTION_START(patch_rts9_gate), SECTION_START(patch_rts9_guard),
         SECTION_START(patch_rts9_park), SECTION_START(patch_rts9_dim), SECTION_START(patch_rts9_resume) };
     const u32 sizes[] = { SECTION_SIZE(patch_rts9_gate), SECTION_SIZE(patch_rts9_guard),
@@ -169,7 +174,7 @@ void InstallRtsProbeArm9(PatchContext& context, const nds_header_ntr_t* header, 
     sM2EntryAtTarget=(u32*)relocated(&rts9_m2_entry,originals[3],targets[3]);
 #endif
 #ifdef PICO_RTS_RESTORE_PROBE
-    if(sWaitHooks!=5)return;
+    if(!sWaitHooks)return;
     sP4Tail=reserve(heap,RTS_P4_TAIL_BYTES);
     if(!sP4Tail)return;
 #endif
@@ -177,10 +182,10 @@ void InstallRtsProbeArm9(PatchContext& context, const nds_header_ntr_t* header, 
         sEnabledAtTarget = (u32*)relocated(&rts9_enabled, originals[0], targets[0]);
 }
 
-void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspace, u32 workspaceBytes)
+void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspace, u32 workspaceBytes,const nds_header_ntr_t* romHeader)
 {
     if (!sEnabledAtTarget || cheatsLength) {
-        rtsProbeMessage("RTS probe unavailable.\nTarget: A2GJ / SDK 3.1.\nDisable cheats for testing.\nNo save-state support.");
+        rtsProbeMessage("RTS unavailable.\nNo compatible ARM9 pause hook,\nor cheats are enabled.");
         return;
     }
 #ifdef PICO_RTS_SNAPSHOT
@@ -200,7 +205,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
         rtsProbeMessage("M2 disabled: SD guards\nwere not installed.");return;
     }
 #ifdef PICO_RTS_RESTORE_PROBE
-    if(!sP4Tail || memcmp(gRtsP4LoaderIdentity.code,RTS_P4_EXPECTED_CODE,32))
+    if(!sP4Tail)
     {rtsProbeMessage("P4 disabled: code identity\nor secure tail unavailable.");return;}
 #endif
     memset(workspace,0,workspaceBytes);
@@ -234,11 +239,14 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
 #else
     (void)workspace; (void)workspaceBytes;
 #endif
-    // Known target's VBlank epilogue. Verify the displaced instructions, too.
-    const u32 pattern[] = { 0xe92d4000, 0xe24dd004, 0xe59f003c, 0xe5902060 };
-    u32* handler = context.FindPattern32(pattern, sizeof(pattern));
-    u32* epilogue = handler ? handler + 0x40/4 : nullptr;
-    if (!epilogue || epilogue[0] != 0xe28dd004 || epilogue[1] != 0xe8bd4000) {
+    const u32 pattern1[]={0xe92d4000,0xe24dd004,0xe59f003c,0xe5902060};
+    const u32 pattern0[]={0xe92d4008,0xe59f2038,0xe59f0038,0xe5921000};
+    u32* handler=context.FindPattern32(pattern1,sizeof(pattern1));
+    u32* epilogue=handler ? handler+0x40/4 : nullptr;
+    bool variant0=false;
+    if(!handler){handler=context.FindPattern32(pattern0,sizeof(pattern0));epilogue=handler ? handler+0x3c/4 : nullptr;variant0=true;}
+    if(!epilogue || (!variant0 && (epilogue[0]!=0xe28dd004 || epilogue[1]!=0xe8bd4000)) ||
+       (variant0 && (epilogue[0]!=0xe8bd4008 || epilogue[1]!=0xe12fff1e))) {
         rtsProbeMessage("RTS probe disabled:\nARM7 hook not recognized.");
         return;
     }
@@ -261,6 +269,36 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     *(u32*)relocated(&rts7_service_address,SECTION_START(patch_rts7),target)=(u32)workspace+RTS_M3_ARM7_SERVICE_OFFSET;
 #endif
 #ifdef PICO_RTS_RESTORE_PROBE
+#ifdef PICO_RTS_GENERIC_SOUND
+    bool soundReady=false;
+    if(romHeader)
+    {
+        RtsSdkSound::Image image{(const u32*)romHeader->arm7LoadAddress,romHeader->arm7Size,romHeader->arm7LoadAddress};
+        RtsSdkSound::Plan plan;
+        if(RtsSdkSound::find(image,plan))
+        {
+            auto common=reserve(context.GetPatchHeap(),SECTION_SIZE(patch_rtsSoundStore));
+            u32* stubs[7]{};bool complete=common;
+            for(u32 i=0;i<7 && complete;++i){stubs[i]=(u32*)reserve(context.GetPatchHeap(),28);complete=stubs[i]!=nullptr;}
+            if(complete)
+            {
+                memcpy(common,SECTION_START(patch_rtsSoundStore),SECTION_SIZE(patch_rtsSoundStore));
+                *(u32*)relocated(&rtsSoundStoreObserve,SECTION_START(patch_rtsSoundStore),common)=ptr[2];
+                const u32 entry=relocated((void*)rtsSoundStoreHook,SECTION_START(patch_rtsSoundStore),common);
+                for(u32 i=0;i<7;++i)
+                {
+                    const auto& site=plan.sites[i];u32* stub=stubs[i];
+                    stub[0]=0xe92d0003;stub[1]=0xe28f1008;stub[2]=0xe59f0000;stub[3]=0xe12fff10;
+                    stub[4]=entry;stub[5]=site.instruction;stub[6]=site.runtime+4;
+                }
+                for(u32 i=0;i<7;++i)((u32*)romHeader->arm7LoadAddress)[plan.sites[i].offset/4]=
+                    0xea000000|((((u32)stubs[i]-plan.sites[i].runtime-8)>>2)&0xffffff);
+                soundReady=true;
+            }
+        }
+    }
+    ((RtsSoundShadow*)ptr[5])->unsupported=soundReady ? 0 : 1;
+#else
     // Exact-code identity above gates these known SDK runtime continuations.
     const u32 pcmPattern[]={0xe1a07002,0xe1a06003,0xe59d1020,0xe59d502c};
     const u32 timerPattern[]={0xe2611801,0xe1a00200,0xe2800301,0xe2800b01};
@@ -293,6 +331,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     const u32 reload=relocated((void*)rtsSoundReloadHook,soundOriginal[2],soundTarget[2]);
     psg[0x94/4]=0xeb000000|(((reload-0x037ff274-8)>>2)&0xffffff);
     noise[0x8c/4]=0xeb000000|(((reload-0x037ff1bc-8)>>2)&0xffffff);
+#endif
     *(u32*)relocated(&rts7_operation_address,SECTION_START(patch_rts7),target)=ptr[6]+offsetof(RtsP4Shared,operation);
     *(u32*)relocated(&rts7_begin_address,SECTION_START(patch_rts7),target)=ptr[1];
     *(u32*)relocated(&rts7_loop_address,SECTION_START(patch_rts7),target)=ptr[0];
@@ -304,6 +343,9 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     epilogue[1] = relocated((void*)rts7_arm, SECTION_START(patch_rts7), target);
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
+#ifdef PICO_RTS_GENERIC_SOUND
+    if(!soundReady)rtsProbeMessage("RTS: sound restore unavailable.\nSave/load remains enabled.\nLoad may resume silently.\nNew music may restart sound.");
+#endif
 #ifdef PICO_RTS_SNAPSHOT
 #ifdef PICO_RTS_ARM7_CAPTURE
 #ifdef PICO_RTS_VIDEO_CAPTURE
@@ -312,7 +354,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     rtsProbeMessage("RTS research: PSG capture P4.8\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2/S9 line.");
 #else
 #ifdef PICO_RTS_LIVE_RESTORE
-    rtsProbeMessage("RTS research: fast restore P4.10\nSave: L+R+Down+A\nLoad: L+R+Down+B\nLoad CRC optional, default off.\nResave after version change.");
+    rtsProbeMessage("RTS P5.0: automatic SDK hooks\nSave: L+R+Down+A\nLoad: L+R+Down+B\nLoad CRC optional, default off.\nResave after version change.");
 #else
     rtsProbeMessage("RTS research: restore P4.2\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nAudio restarts. 3D incomplete.");
 #endif

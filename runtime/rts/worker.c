@@ -143,7 +143,7 @@ static u32 crc(u32 value,const u32* words,u32 count)
 static int mapSector(u32 index,u32* result)
 {
     RtsSnapshotInfo* m=&gRtsM2.info;
-    if (m->magic!=RTS_M2_MAGIC || m->version!=RTS_M2_VERSION || m->gameCode!=RTS_M2_GAME ||
+    if (m->magic!=RTS_M2_MAGIC || m->version!=RTS_M2_VERSION ||
         m->fileSectors!=RTS_M2_FILE_SECTORS || !m->extentCount || m->extentCount>RTS_M2_MAX_EXTENTS ||
         m->dataStart>=m->dataEnd || index>=RTS_M2_FILE_SECTORS)return 0;
     u32 total=0;
@@ -449,7 +449,7 @@ void rtsM2Run(const u32* entryRegs)
     progress(1,0);
 #endif
     clear(h,sizeof(*h));
-    h->magic=RTS_M2_MAGIC;h->version=RTS_M2_VERSION;h->fileBytes=RTS_M2_FILE_BYTES;h->gameCode=RTS_M2_GAME;
+    h->magic=RTS_M2_MAGIC;h->version=RTS_M2_VERSION;h->fileBytes=RTS_M2_FILE_BYTES;h->gameCode=s->info.gameCode;
     h->payloadBytes=RTS_M2_PAYLOAD_BYTES;h->workspaceBase=s->base;h->workspaceBytes=s->bytes;
     h->dtcmBase=dtcm&~0xfffu;h->dtcmBytes=0x4000;h->itcmBase=0x01ff8000;h->itcmBytes=0x8000;
     h->control=control;h->dtcmConfig=dtcm;h->itcmConfig=itcm;
@@ -533,7 +533,7 @@ void rtsM2Run(const u32* entryRegs)
     if(!readSector(0,s->readback))fault(1);
     const RtsM2Header* previous=(const RtsM2Header*)s->readback;
     if(previous->magic!=RTS_M2_MAGIC || previous->version!=RTS_M2_VERSION ||
-       previous->fileBytes!=RTS_M2_FILE_BYTES || previous->gameCode!=RTS_M2_GAME ||
+       previous->fileBytes!=RTS_M2_FILE_BYTES || previous->gameCode!=s->info.gameCode ||
        previous->payloadBytes!=RTS_M2_PAYLOAD_BYTES)fault(2);
     h->sequence=previous->sequence+1;
     h->phase=1; // invalidate completion BEFORE touching the previous payload

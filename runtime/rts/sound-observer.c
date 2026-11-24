@@ -1,6 +1,22 @@
 #include "RtsSoundRestart.h"
 RtsSoundShadow gRtsSoundShadow;
 volatile uint32_t gRtsSoundBusy;
+#ifdef PICO_RTS_GENERIC_SOUND
+// Called at a decoded MMIO store, independent of the SDK argument ABI.
+// Frame: r2-r12, original LR, r0, r1. The private stub masks IRQ/FIQ
+// across shadow publication and the original hardware write.
+void rtsSoundObserveStore(const uint32_t* frame,const uint32_t* site)
+{
+    uint32_t op=site[0],rn=(op>>16)&15,rd=(op>>12)&15;
+    uint32_t base=frame[rn<2 ? 12+rn : rn-2];
+    uint32_t value=frame[rd<2 ? 12+rd : rd-2];
+    uint32_t half=(op&0x0e000000)==0;
+    uint32_t address=base+(half ? ((op>>4)&240)|(op&15) : op&4095);
+    RtsObserveSoundWrite(&gRtsSoundShadow,address,half ? 2 : 4,value);
+    if(half)*(volatile uint16_t*)address=value;
+    else *(volatile uint32_t*)address=value;
+}
+#else
 // Original SDK arguments, before its first prologue. Only write-only fields
 // are shadowed; actual current CNT is sampled on ARM7 when saving.
 void rtsSoundObservePcm(const uint32_t* regs,const uint32_t* stack)
@@ -32,3 +48,5 @@ void rtsSoundObserveReload(const uint32_t* regs)
     if(a<0x04000400 || a>=0x04000500 || (a&15)){gRtsSoundShadow.unsupported=1;return;}
     RtsObserveSoundWrite(&gRtsSoundShadow,a+8,2,regs[1]&65535);
 }
+
+#endif

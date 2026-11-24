@@ -42,8 +42,16 @@ rtsP4Arm7Entry:
 .section .data.p4Pointers,"aw"
 .global gRtsP4Pointers
 gRtsP4Pointers:
+.ifdef RTS_GENERIC_SOUND
+    .word rtsP4Arm7Entry,rtsP4Arm7Begin,rtsSoundObserveStore,0
+.else
     .word rtsP4Arm7Entry,rtsP4Arm7Begin,rtsSoundObservePcm,rtsSoundObserveTimer
+.endif
     .word gRtsSoundBusy,gRtsSoundShadow,gRtsP4,gRtsP4Identity
     .word rtsArm9RestoreTail,gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4LoadVerify
     .word gRtsP4Scratch
+.ifdef RTS_GENERIC_SOUND
+    .word 0,gRtsP4Arm7TailAddress
+.else
     .word rtsSoundObserveReload,gRtsP4Arm7TailAddress
+.endif

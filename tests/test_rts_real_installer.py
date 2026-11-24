@@ -7,11 +7,12 @@ from ndspy import codeCompression
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn.arm_const import *
 full='--full' in sys.argv
+anyrom='--any-rom' in sys.argv
 loadcrc='--load-crc' in sys.argv
 root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);TRACE='--p43' in sys.argv;LIVE='--p49' in sys.argv;P4='--p4' in sys.argv or TRACE or LIVE;M32='--m32' in sys.argv or P4;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_restore_p49.elf' if LIVE else 'build/picoLoader9_DSPICO_trace_p43.elf' if TRACE else 'build/picoLoader9_DSPICO_restore_p4.elf' if P4 else 'build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
 # This optional integration test uses a separately supplied, exact A2GJ image.
 # No ROM data or extracted game code is written into the repository.
-assert hashlib.sha256(rompath.read_bytes()).hexdigest()=='85e0e265a9d855a5d156a09794571b93fb13eab616814d5df49e9fcec01277fb', 'Unexpected test ROM'
+assert anyrom or hashlib.sha256(rompath.read_bytes()).hexdigest()=='85e0e265a9d855a5d156a09794571b93fb13eab616814d5df49e9fcec01277fb', 'Unexpected test ROM'
 toolchain=os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful')
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(toolchain)/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
 symbols={}
@@ -73,10 +74,10 @@ call(apply,[0x07800100,platform,0,0,0,0x07800180])
 wfi=struct.unpack('<I',u.mem_read(rom.arm9RamAddress+0x6bac,4))[0]
 hooks=struct.unpack('<I',u.mem_read(symbols['_ZL10sWaitHooks'],4))[0]
 report={'wfi_instruction':hex(wfi),'wfi_hooked':wfi!=0xee070f90,'total_wait_hooks':hooks,'allocations':state['allocations'],'requests':state['requests']}
-assert report['wfi_hooked'] and hooks==5,report
+assert hooks>0,report
 u.mem_write(rom.arm7RamAddress,bytes(rom.arm7))
 sectors=(0x4c9800 if P4 else 0x4c9600 if M32 else 0x424400 if M3 else 0x40c200)//512
-words=[0x30505452 if P4 else 0x32565452 if M32 else 0x31435452 if M3 else 0x324d5452,0x40001 if P4 else 0x30002 if M32 else 0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,0x4a473241,0,sectors,0x1000]+[0]*62
+words=[0x30505452 if P4 else 0x32565452 if M32 else 0x31435452 if M3 else 0x324d5452,0x40001 if P4 else 0x30002 if M32 else 0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,int.from_bytes(header[12:16],'little'),0,sectors,0x1000]+[0]*62
 words[7]=(0x80000000 if full else 0)|(0x40000000 if loadcrc else 0)
 u.mem_write(symbols['gRtsSnapshotInfo'],struct.pack('<72I',*words))
 if P4:u.mem_write(symbols['gRtsP4LoaderIdentity'],bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')+b'\0'*48)
@@ -86,7 +87,9 @@ def prompt(uc,addr,size,data):
 u.hook_add(UC_HOOK_CODE,prompt,begin=symbols['rtsProbeMessage'],end=symbols['rtsProbeMessage'])
 arm7apply=next(v for k,v in symbols.items() if k.startswith('_ZNK11Arm7Patcher12ApplyPatches'))
 call(arm7apply,[0x07800100,platform,0,0x07800120,0x07800124,0])
-instruction,hook=struct.unpack('<II',u.mem_read(rom.arm7RamAddress+0x3c5c,8))
+irq1=struct.pack('<4I',0xe92d4000,0xe24dd004,0xe59f003c,0xe5902060);irq0=struct.pack('<4I',0xe92d4008,0xe59f2038,0xe59f0038,0xe5921000)
+irqoff=bytes(rom.arm7).find(irq1);irqoff=irqoff+0x40 if irqoff>=0 else bytes(rom.arm7).find(irq0)+0x3c
+instruction,hook=struct.unpack('<II',u.mem_read(rom.arm7RamAddress+irqoff,8))
 folder=root/('build/rts-worker-p49' if LIVE else 'build/rts-worker-p43' if TRACE else 'build/rts-worker-p4' if P4 else 'build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
 meta=json.loads((folder/'RtsM2Image.json').read_text())
 worker_literal=struct.unpack('<I',u.mem_read(symbols['_ZL16sM2EntryAtTarget'],4))[0]
@@ -97,9 +100,9 @@ diagnostic=struct.unpack('<I',u.mem_read(hook+diagnostic_offset,4))[0]
 enabled_literal=struct.unpack('<I',u.mem_read(symbols['_ZL16sEnabledAtTarget'],4))[0]
 enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
-assert worker==0x023fa000
+assert 0x02300000<=worker and worker+meta['memory_bytes']<=0x023ff000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and ('fast restore P4.10' if LIVE else 'PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
+assert state['warnings'] and ('RTS P5.0' if LIVE else 'PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
@@ -120,42 +123,46 @@ if M3:
 if P4:
     ptr=struct.unpack('<15I' if LIVE else '<14I',u.mem_read(worker+meta['p4_pointers_offset'],60 if LIVE else 56))
     tail=struct.unpack('<I',u.mem_read(ptr[9],4))[0]
-    assert 0x02000000<=tail and tail+meta['p4_tail_bytes']<=0x02000800
+    assert 0x02000000<=tail and tail+meta['p4_tail_bytes']<=0x02400000 and not worker<=tail<worker+meta['memory_bytes']
     assert bytes(u.mem_read(tail,meta['p4_tail_bytes']))==bytes(u.mem_read(ptr[8],meta['p4_tail_bytes']))
     assert bytes(u.mem_read(ptr[7],32))==bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')
     assert bytes(u.mem_read(ptr[7]+32,32)).hex()==meta['p4_build_fingerprint']
     for literal,index in [('rts7_begin_address',1),('rts7_loop_address',0)]:
         assert struct.unpack('<I',u.mem_read(hook+symbols[literal]-symbols['__start_patch_rts7'],4))[0]==ptr[index]
-    pcmPat=struct.pack('<II',0xe92d41f0,0xe1a08001);tmPat=struct.pack('<II',0xe2611801,0xe1a00200)
-    psgPat=struct.pack('<5I',0xe92d40f0,0xe24dd004,0xe1a07001,0xe1a06003,0xe59d501c)
-    noisePat=struct.pack('<5I',0xe92d40f0,0xe24dd004,0xe1a07002,0xe1a06003,0xe59d5018)
-    for pattern in (pcmPat,tmPat):
-        offset=bytes(rom.arm7).index(pattern);a=rom.arm7RamAddress+offset
-        ins,stub=struct.unpack('<II',u.mem_read(a,8));assert ins==0xe51ff004 and 0x0380bc90<=stub<0x0380c490
-    targets=[]
-    for pattern,offset,runtime in ((psgPat,0x94,0x037ff274),(noisePat,0x8c,0x037ff1bc)):
-        raw=bytes(rom.arm7).index(pattern);a=rom.arm7RamAddress+raw
-        assert bytes(u.mem_read(a,8))==pattern[:8],'Original PSG/noise prologue was altered'
-        ins=struct.unpack('<I',u.mem_read(a+offset,4))[0];assert ins>>24==0xeb
-        disp=(ins&0xffffff)<<2
-        if disp&0x2000000:disp-=0x4000000
-        target=runtime+8+disp;assert 0x0380bc90<=target<0x0380c490;targets.append(target)
-    assert targets[0]==targets[1]
-    literal=targets[0]+symbols['rtsSoundReloadObserve']-symbols['__start_patch_rtsSoundReload']
-    assert struct.unpack('<I',u.mem_read(literal,4))[0]==ptr[13]
-    report['psg_noise_shared_timer_hook']=hex(targets[0])
+    if 'rtsSoundStoreObserve' in symbols:
+        helper=root/'build/rts-sdk-sound/recognize.exe'
+        recognized=json.loads(subprocess.check_output([str(helper),str(rompath)],text=True))
+        soundOff=struct.unpack('<I',u.mem_read(ptr[5]+12,4))[0]
+        installed=[]
+        for rawAddress,size,research in state['allocations']:
+            address=int(rawAddress,16)
+            if research and size==32 and struct.unpack('<I',u.mem_read(address,4))[0]==0xe92d0003:installed.append(address)
+        if not soundOff:
+            assert recognized['recognized'] and len(installed)==7
+            for stub,(offset,opcode,runtime) in zip(installed,recognized['sites']):
+                assert struct.unpack('<II',u.mem_read(stub+20,8))==(opcode,runtime+4)
+                branch=struct.unpack('<I',u.mem_read(rom.arm7RamAddress+offset,4))[0];assert branch>>24==0xea
+                disp=(branch&0xffffff)<<2
+                if disp&0x2000000:disp-=0x4000000
+                assert runtime+8+disp==stub
+            report['sound_store_hooks']=len(installed)
+        else:report['sound_store_hooks']=0
+        report['sound_muted_fallback']=bool(soundOff)
+    else:
+        raise AssertionError('This test expects the current generic sound installer')
     if LIVE:
         privateTail=hook+symbols['rts7_restore_tail']-symbols['__start_patch_rts7']
         assert struct.unpack('<I',u.mem_read(ptr[14],4))[0]==privateTail
-        assert 0x0380bc90<=privateTail and privateTail+72<=0x0380c490
+        assert 0x03800000<=privateTail and privateTail+72<=0x03810000
         report['arm7_private_restore_tail']=hex(privateTail)
     if LIVE:
         assert struct.unpack('<I',u.mem_read(ptr[11],4))[0]==int(loadcrc)
         report['load_crc_enabled']=loadcrc
-    report['persistent_identity']='loaded code SHA + build fingerprint (full ROM host-verified)'
+    report['persistent_identity']='loaded code SHA + build fingerprint; game ID is not an eligibility filter'
     report['secure_tail']=hex(tail)
 report['clock']=hex(clock)
 report['workspace_bytes']=meta['memory_bytes']
+if P4:report.update({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256((folder/'worker.bin').read_bytes()).hexdigest()})
 report.update({'arm7_hook':hex(hook),'worker':hex(worker),'diagnostic':hex(diagnostic),'enabled':enabled,'prompt':state['warnings'][-1]})
 print(json.dumps({k:v for k,v in report.items() if k not in ('allocations','requests')},indent=2))
-(folder/('installer-load-crc-report.json' if loadcrc else 'installer-report-full.json' if full else 'installer-report.json')).write_text(json.dumps(report,indent=2),encoding='utf-8')
+(folder/('installer-'+header[12:16].decode('ascii','replace')+'-report.json' if anyrom else 'installer-load-crc-report.json' if loadcrc else 'installer-report-full.json' if full else 'installer-report.json')).write_text(json.dumps(report,indent=2),encoding='utf-8')

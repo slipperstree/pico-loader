@@ -37,7 +37,7 @@ static bool verifyMode(const char* path,const char* enabled,bool fallback)
     return fallback;
 }
 
-bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path)
+bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path,uint32_t gameCode)
 {
     memset(&info,0,sizeof(info));
     FIL file;
@@ -51,7 +51,7 @@ bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path)
         header.magic=RTS_M2_MAGIC;
         header.version=RTS_M2_VERSION;
         header.fileBytes=RTS_M2_FILE_BYTES;
-        header.gameCode=RTS_M2_GAME;
+        header.gameCode=gameCode;
         header.payloadBytes=RTS_M2_PAYLOAD_BYTES;
         if (f_write(&file,&header,sizeof(header),&done)!=FR_OK || done!=sizeof(header)) {close();return false;}
         auto zero=std::make_unique<u32[]>(1024);
@@ -68,7 +68,7 @@ bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path)
     {
         if (f_size(&file)!=RTS_M2_FILE_BYTES || f_read(&file,&header,sizeof(header),&done)!=FR_OK || done!=sizeof(header) ||
             header.magic!=RTS_M2_MAGIC || header.version!=RTS_M2_VERSION || header.fileBytes!=RTS_M2_FILE_BYTES ||
-            header.gameCode!=RTS_M2_GAME || header.payloadBytes!=RTS_M2_PAYLOAD_BYTES)
+            header.gameCode!=gameCode || header.payloadBytes!=RTS_M2_PAYLOAD_BYTES)
         { close();return false; } // Never replace a foreign or incompatible file.
     }
 #ifdef PICO_RTS_RESTORE_PROBE
@@ -116,7 +116,7 @@ bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path)
     if (!close() || left) {memset(&info,0,sizeof(info));return false;}
     info.version=RTS_M2_VERSION;
     info.fileSectors=RTS_M2_FILE_SECTORS;
-    info.gameCode=RTS_M2_GAME;
+    info.gameCode=gameCode;
     info.reserved=verifyMode(RTS_M2_VERIFY_PATH,"full",true) ? RTS_M2_CONFIG_FULL_VERIFY : 0;
 #ifdef PICO_RTS_RESTORE_PROBE
     if(verifyMode(RTS_P4_LOAD_VERIFY_PATH,"full",false))info.reserved|=RTS_P4_CONFIG_LOAD_VERIFY;

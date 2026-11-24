@@ -201,7 +201,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         }
 #ifdef PICO_RTS_PROBE
 #ifdef PICO_RTS_SNAPSHOT
-        if (!runInDSiMode) InstallRtsProbeArm7(patchContext, cheatsLength,snapshotWorkspace,snapshotWorkspaceBytes);
+        if (!runInDSiMode) InstallRtsProbeArm7(patchContext, cheatsLength,snapshotWorkspace,snapshotWorkspaceBytes,romHeader);
 #else
         if (!runInDSiMode) InstallRtsProbeArm7(patchContext, cheatsLength);
 #endif

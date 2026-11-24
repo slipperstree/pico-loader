@@ -12,7 +12,7 @@ RTS_EXTRA_OBJ += $(RTS_BUILD)/video-capture.o
 endif
 ifeq ($(PICO_RTS_RESTORE_PROBE),1)
 RTS_MODE := -mthumb
-RTS_IDENTITY_INPUTS := arm9/source/patches/rts/RtsProbe.cpp arm9/source/patches/rts/RtsProbe7.s arm9/source/patches/rts/RtsProbe9.s arm9/source/patches/rts/RtsSoundHooks7.s common/RtsP4.h common/RtsP4Profile.h common/RtsSnapshotInfo.h common/RtsSavePath.c common/RtsSha256.c arm7/source/loader/NdsLoader.cpp arm7/source/loader/RtsSnapshotPrepare.cpp
+RTS_IDENTITY_INPUTS := arm9/source/patches/rts/RtsSdkSound.h arm9/source/patches/rts/RtsProbe.cpp arm9/source/patches/rts/RtsProbe7.s arm9/source/patches/rts/RtsProbe9.s arm9/source/patches/rts/RtsSoundHooks7.s common/RtsP4.h common/RtsP4Profile.h common/RtsSnapshotInfo.h common/RtsSavePath.c common/RtsSha256.c arm7/source/loader/NdsLoader.cpp arm7/source/loader/RtsSnapshotPrepare.cpp
 RTS_EXTRA_FLAGS += -DPICO_RTS_RESTORE_PROBE
 RTS_EXTRA_OBJ += $(addprefix $(RTS_BUILD)/,arm9-cpu-capture.o arm9-state-restore.o arm7-restore.o arm9-continuation.o arm7-restore-validator.o sound-restart.o sound-observer.o p4-arm7.o p4-arm7-entry.o p4-load.o)
 endif
@@ -28,8 +28,8 @@ $(error PICO_RTS_LIVE_RESTORE and PICO_RTS_CPU_TRACE are separate builds)
 endif
 RTS_EXTRA_OBJ := $(subst build/rts-worker-p4/,build/rts-worker-p49/,$(RTS_EXTRA_OBJ))
 RTS_BUILD := build/rts-worker-p49
-RTS_EXTRA_FLAGS += -DPICO_RTS_LIVE_RESTORE -Oz
-RTS_TRACE_AS_FLAGS += -Wa,--defsym,RTS_LIVE_RESTORE=1
+RTS_EXTRA_FLAGS += -DPICO_RTS_LIVE_RESTORE -DPICO_RTS_GENERIC_SOUND -Oz
+RTS_TRACE_AS_FLAGS += -Wa,--defsym,RTS_LIVE_RESTORE=1,--defsym,RTS_GENERIC_SOUND=1
 endif
 RTS_FLAGS := -mcpu=arm946e-s -marm -Os -ffreestanding -fno-builtin -fno-jump-tables -fno-stack-protector -fno-pic -fno-tree-loop-distribute-patterns -ffunction-sections -fdata-sections -Icommon -Wall -Wextra
 

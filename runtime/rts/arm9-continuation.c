@@ -17,13 +17,18 @@ static int knownLayout(const RtsM2Header* h)
            (h->magic==0x31435452 && h->version==0x30001 && h->fileBytes==0x424400 && h->payloadBytes==0x424200) ||
            (h->magic==0x32565452 && h->version==0x30002 && h->fileBytes==0x4c9600 && h->payloadBytes==0x4c9400);
 }
-static int secure(u32 address,u32 bytes){return within(address,bytes,0x02000000,0x800);}
+static int secure(const RtsM2Header* h,u32 address,u32 bytes)
+{
+    // The loader's patch heap may be at 02004000 (e.g. later SDK games),
+    // rather than 02000000. Stub instruction/frame checks below still apply.
+    (void)h;return within(address,bytes,0x02000000,0x8000);
+}
 int RtsBuildArm9Continuation(const RtsM2Header* h,int payloadVerified,
     RtsReadCapturedBytes read,void* user,RtsArm9Continuation* out)
 {
     if(!payloadVerified)return RTS_CONTINUATION_UNVERIFIED;
     if(!h || !read || !out || !knownLayout(h) ||
-       h->gameCode!=RTS_M2_GAME || h->phase!=2 || h->error || ((h->magic==0x30505452) ? (h->flags!=4 && h->flags!=6) : (h->flags!=1 && h->flags!=3)) ||
+       h->phase!=2 || h->error || ((h->magic==0x30505452) ? (h->flags!=4 && h->flags!=6) : (h->flags!=1 && h->flags!=3)) ||
        h->dtcmBytes!=0x4000 || h->itcmBase!=0x01ff8000 || h->itcmBytes!=0x8000 ||
        h->dtcmBase<0x02400000 || h->dtcmBase>0x02ffc000 || (h->dtcmBase&0xfff) ||
        !h->workspaceBytes || (h->workspaceBase&511) || (h->workspaceBytes&511) ||
@@ -44,7 +49,7 @@ int RtsBuildArm9Continuation(const RtsM2Header* h,int payloadVerified,
     u32 gate;
     if(lr&1)
     {
-        if(pc<6 || !secure(pc-6,16))return RTS_CONTINUATION_STUB;
+        if(pc<6 || !secure(h,pc-6,16))return RTS_CONTINUATION_STUB;
         uint16_t stub[8];
         if(!read(user,pc-6,stub,sizeof(stub)))return RTS_CONTINUATION_READ;
         if(stub[0]!=0xb50f || stub[1]!=0x4b02 || stub[2]!=0x4798 || stub[3]!=0xbc0f ||
@@ -54,7 +59,7 @@ int RtsBuildArm9Continuation(const RtsM2Header* h,int payloadVerified,
     }
     else
     {
-        if((pc&3) || pc<12 || !secure(pc-12,32))return RTS_CONTINUATION_STUB;
+        if((pc&3) || pc<12 || !secure(h,pc-12,32))return RTS_CONTINUATION_STUB;
         u32 stub[8];
         if(!read(user,pc-12,stub,sizeof(stub)))return RTS_CONTINUATION_READ;
         if(stub[0]!=0xe92d500f || stub[1]!=0xe59fc00c || stub[2]!=0xe12fff3c ||
@@ -71,7 +76,7 @@ int RtsBuildArm9Continuation(const RtsM2Header* h,int payloadVerified,
         if(h->regs[12]!=gate)return RTS_CONTINUATION_FRAME;
     }
     u32 gateStart;
-    if((gate&3) || !secure(gate,4))return RTS_CONTINUATION_STUB;
+    if((gate&3) || !secure(h,gate,4))return RTS_CONTINUATION_STUB;
     if(!read(user,gate,&gateStart,4))return RTS_CONTINUATION_READ;
     if(gateStart!=0xe92d500f)return RTS_CONTINUATION_STUB;
     RtsArm9Continuation result;

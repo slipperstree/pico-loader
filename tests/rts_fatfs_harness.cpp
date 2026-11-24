@@ -45,6 +45,11 @@ int main(int argc,char** argv){
     check(f_mkdir("/中文目录"));
     const char* named="/中文目录/逆转裁判2.rts";
     assert(PrepareRtsSnapshotFile(info,named));FIL namedFile;check(f_open(&namedFile,named,FA_READ));assert(f_size(&namedFile)==RTS_M2_FILE_BYTES);check(f_close(&namedFile));check(f_unlink(named));
+    const char* other="/中文目录/另一游戏.rts";
+    assert(PrepareRtsSnapshotFile(info,other,0x454d4147));assert(info.gameCode==0x454d4147);
+    assert(PrepareRtsSnapshotFile(info,other,0x454d4147));
+    assert(!PrepareRtsSnapshotFile(info,other,0x4a473241));check(f_unlink(other));
+    puts("PASS per-game gameCode: arbitrary game accepted, foreign slot kept separate");
     // Simulated reboot must preserve all bytes of a completed checkpoint header.
     FIL saved;check(f_open(&saved,RTS_M2_FILE_PATH,FA_READ|FA_WRITE));
     RtsM2Header persistent{};UINT count=0;check(f_read(&saved,&persistent,512,&count));assert(count==512);

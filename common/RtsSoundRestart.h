@@ -35,6 +35,7 @@ RTS_SOUND_API int RtsBuildSoundRestartDetailed(const RtsSoundShadow*,const uint3
 // Unlinked research. Caller validates whole checkpoint and restores sample RAM
 // before Prepare. Release only after both CPUs and device state are coherent.
 // Intentionally restarts samples; does not recover their internal play position.
+RTS_SOUND_API int RtsBuildSoundRestartOrMute(const RtsSoundShadow*,const uint32_t controls[16],uint32_t master,uint32_t bias,uint32_t capture,RtsSoundRestartPlan*);
 RTS_SOUND_API void RtsPrepareSoundRestart(const RtsSoundRestartPlan*,RtsSoundWrite,void*);
 RTS_SOUND_API void RtsReleaseSoundRestart(const RtsSoundRestartPlan*,RtsSoundWrite,void*);
 #ifdef __cplusplus

@@ -209,14 +209,14 @@ void NdsLoader::Load(BootMode bootMode)
 
 #ifdef PICO_RTS_SNAPSHOT
     memset(&sRtsSnapshotInfo,0,sizeof(sRtsSnapshotInfo));
-    if (!isHomebrew && !_runInDSiMode && _romHeader.gameCode==RTS_M2_GAME &&
+    if (!isHomebrew && !_runInDSiMode &&
         bootMode!=BootMode::Multiboot && gLoaderHeader.bootDrive==PLOAD_BOOT_DRIVE_DLDI)
     {
 #ifdef PICO_RTS_RESTORE_PROBE
         if(_romPath)
         {
             size_t capacity=strlen(_romPath)+5;auto path=std::make_unique<char[]>(capacity);
-            if(RtsMakeSavePath(_romPath,path.get(),capacity))PrepareRtsSnapshotFile(sRtsSnapshotInfo,path.get());
+            if(RtsMakeSavePath(_romPath,path.get(),capacity))PrepareRtsSnapshotFile(sRtsSnapshotInfo,path.get(),_romHeader.gameCode);
         }
 #else
         PrepareRtsSnapshotFile(sRtsSnapshotInfo);
@@ -999,7 +999,7 @@ bool NdsLoader::TryLoadArm7()
     {
         RtsSha256Update(&sP4CodeHash,(void*)_romHeader.arm7LoadAddress,_romHeader.arm7Size);
         RtsSha256Finish(&sP4CodeHash,sP4Code);
-        if(memcmp(sP4Code,RTS_P4_EXPECTED_CODE,32)!=0)sRtsSnapshotInfo.magic=0;
+        // Identity distinguishes slots; it is not a game whitelist.
     }
 #endif
     LOG_DEBUG("Arm7 loaded\n");

@@ -3,13 +3,81 @@
 P4 connects the existing state primitives to live DSPico hotkeys for one
 host-verified A2GJ ROM/SDK 3.1 profile. It is an opt-in research build, not a
 general save-state release. Basic P4.9 save/restore has passed on the user's
-414/MSET 3DS; title-screen/cross-scene restore is being extended in P4.10.
+414/MSET 3DS. P4.10 has now also passed save/load and, after restarting the
+game, loading the gameplay checkpoint from the title screen.
 
 Save uses L+R+Down+A; load uses L+R+Down+B, held for 30 VBlanks. A single
 `game.rts` file is preallocated beside `game.nds`, preserving UTF-8 paths and
 the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
+
+## P5.0: automatic game eligibility and sound downgrade
+
+P4.10 is hardware-confirmed by the user: save, restore, restart the ROM, and
+restore gameplay directly from the title screen all work on the 414/MSET 3DS.
+That evidence still concerns the tested A2GJ ROM; it does not establish other
+games or hardware configurations.
+
+The live build removes the game-code, exact SDK-version and loaded-code
+whitelists. Every retail ROM launched in DS mode can prepare its own same-name
+slot. The header and runtime sector mapping carry the actual game code, and
+loaded-code/build identities still prevent mixing slots from different ROMs
+or incompatible resident hooks. Homebrew, multiboot and DSi-mode capture are
+not implemented. Eligibility depends on actual ARM9 wait code, ARM7 VBlank
+epilogue and reserved memory, rather than a list of accepted game titles.
+
+Both common ARM7 VBlank epilogues are supported. The installer accepts a
+nonzero number of ARM9 wait hooks instead of the first ROM's exact count of
+five. ARM9 continuation stub validation covers the leading 32 KiB patch area,
+including the common 02004000 load base. It does not assume every game's
+stub is in the first 02000000..02000800 window.
+
+Sound no longer depends on a PCM function argument ABI or fixed A2GJ return
+addresses. A shared source/host-tested recognizer finds seven hardware stores
+(PCM source/period/loop/length, the period setter and PSG/noise periods) in
+common early/later NTR SDK code. It reads the ARM7 startup autoload table to
+translate stored image offsets to runtime addresses. Each replaced store
+branches through a small descriptor to a private ARM7 shim. The shim preserves
+all registers, LR, SP and CPSR, publishes the shadow, performs the original
+store while IRQ/FIQ are masked, then resumes the exact next instruction.
+Using B rather than BL also preserves LR in leaf SDK setters.
+
+If recognition, hook space, or sound metadata coverage is insufficient,
+snapshot save/load may continue with a muted restart plan. The loader warns
+when it knows at boot that sound is not instrumented. Load stops all old
+voices and restores the game's CPU/software state; a later complete SDK sound
+setup/start can produce sound again. Volume-only changes, reuse of an old
+voice, and every custom audio engine are not guaranteed to repair it. A live
+sound-capture writer remains a distinct refusal (4306), since it can change
+RAM while the CPUs are paused; missing sound metadata alone is not refused.
+
+Other limitations remain: pause entry discovery, available worker/private
+patch memory, active DMA/capture, internal 3D state, unobserved write-only
+display state, and exact timer reload/phase. Audio downgrade does not solve
+these independent classes. The worker reservation remains 20480 bytes, with
+1024/384-byte ARM9/ARM7 stacks; first-target restoration observed 912 bytes
+of ARM9 stack in the local model.
+
+Private local library analysis found 184/196 ROM files recognized by the
+compiled sound recognizer. This is recognition coverage in that selected
+library, not a hardware compatibility percentage. Eleven representative
+installer inputs cover SDK 2/3/4/5; eight completed actual installer checks,
+two failed in the pre-existing baseline ARM9 patch/model stage, and one had
+no RTS workspace available. The latter cases are not labeled sound failures.
+The compiled store shim matches original stores in 1344 register/flags/MMIO
+cases across six private ROMs. Per-game FatFs isolation, default single-pass
+restore, opt-in CRC, an arbitrary non-A2GJ ID with missing sound coverage,
+and the actual dual-CPU handoff are also covered locally. Public source and
+packages include none of the private ROM, RAM, `.sav` or disassembly bytes.
+
+Build flags and internal `--p49` selectors remain unchanged; the live mode
+now defines `PICO_RTS_GENERIC_SOUND`. The recognizer header participates in
+the build fingerprint because its descriptors affect saved private hooks.
+Create fresh P5.0 checkpoints before testing; P4.10 slots/loaders are backed up.
+New-game hardware behavior remains to be tested, starting with ordinary 2D
+games such as AA3/AA4, then expanding the sample rather than chasing every
+special engine.
 
 ## P4.10: single-pass load by default
 

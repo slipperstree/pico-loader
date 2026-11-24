@@ -1,5 +1,37 @@
 // Original ARM7 SDK observation stubs, installed only in the gated RTS profile.
 #ifdef PICO_RTS_AUDIO_SHADOW
+#ifdef PICO_RTS_GENERIC_SOUND
+.cpu arm7tdmi
+.syntax unified
+.arm
+.section patch_rtsSoundStore,"ax"
+.global rtsSoundStoreHook,rtsSoundStoreObserve
+rtsSoundStoreHook:
+    stmdb sp!,{r2-r12,lr}
+    mrs r3,cpsr
+    stmdb sp!,{r1,r3}
+    orr r12,r3,#192
+    msr cpsr_c,r12
+    add r0,sp,#8
+    ldr r1,[sp]
+    ldr r12,rtsSoundStoreObserve
+    mov lr,pc
+    bx r12
+    ldr r2,[sp]
+    ldr r2,[r2,#4]
+    ldr lr,[sp,#52]
+    ldr r0,[sp,#56]
+    ldr r1,[sp,#60]
+    str r0,[sp,#52]
+    str r1,[sp,#56]
+    str r2,[sp,#60]
+    ldr r0,[sp,#4]
+    msr cpsr_cxsf,r0
+    add sp,sp,#8
+    ldmia sp!,{r2-r12}
+    ldmia sp!,{r0,r1,pc}
+rtsSoundStoreObserve: .word 0
+#else
 .cpu arm7tdmi
 .syntax unified
 .arm
@@ -96,4 +128,6 @@ rtsSoundExitHook:
     ldmia sp!,{r0-r3,r12,lr}
     bx lr
 rtsSoundExitBusy: .word 0
+#endif
+
 #endif

@@ -29,7 +29,7 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False,verify_load=False,scene_change=False):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False,verify_load=False,scene_change=False,audio_fallback=False,game_code=0x4a473241):
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -49,7 +49,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  cfg=syms['gRtsM2'];mail=syms['gRtsArm7Mailbox'];ctrl=syms['gRtsP4'];shadow=syms['gRtsSoundShadow'];stack=syms['gRtsM2Stack'];a7stack=syms['gRtsP4Arm7Stack']
  config=[0x30505452,0x40001,sectors,len(extents),0x800,0x10000,0x4a473241,0]
  for n,a in extents:config.extend((n,a))
- config+=[0]*(72-len(config));put(u,cfg,*config,base,meta['memory_bytes']);put(u,cfg+296+76,6)
+ config+=[0]*(72-len(config));config[6]=game_code;put(u,cfg,*config,base,meta['memory_bytes']);put(u,cfg+296+76,6)
  if early_refusal:put(u,cfg+36,0x400)
  if refusal=='sd_busy':put(u,cfg+28,4096)
  for cpu in (u,a7):
@@ -57,6 +57,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   put(cpu,shadow,0x31485341,1,1,0)
   if LIVE:put(cpu,syms['gRtsP4Arm7TailAddress'],tail7)
   put(cpu,shadow+16,0x8800407f,0x02710000 if source_alias else 0x02010000,65000,4,16);put(cpu,shadow+336,0xfff0)
+  if audio_fallback:put(cpu,shadow+12,1)
   if refusal=='sound_busy':put(cpu,syms['gRtsSoundBusy'],1)
   if refusal=='sound_coverage':put(cpu,shadow+336,0)
   if refusal=='sound_unsupported':put(cpu,shadow+12,1)
@@ -226,7 +227,11 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
      sync7()
      if psg_first:
       put(a7,a7stack,0x040004b0,0x10000-777)
-      call7('rtsSoundObserveReload',[a7stack],True)
+      if 'rtsSoundObserveReload' in syms:call7('rtsSoundObserveReload',[a7stack],True)
+      else:
+       put(a7,a7stack,*([0]*12),0x040004b0,0x10000-777)
+       put(a7,a7stack+64,0xe1c010b8,0)
+       call7('rtsSoundObserveStore',[a7stack,a7stack+64],True)
      call7('rtsP4Arm7Begin',[0x4000],True)
      cpu.mem_write(ctrl,bytes(a7.mem_read(ctrl,224)));put(cpu,ctrl+4,int(load));put(cpu,ctrl+8,1)
      cpu.mem_write(shadow,bytes(a7.mem_read(shadow,512)))
@@ -338,6 +343,9 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  assert state['minsp9']>=stack,'ARM9 worker stack overflow'
  assert state['done'] and state['fault'] is None,{'pc':hex(u.reg_read(UC_ARM_REG_PC)),**{k:v for k,v in state.items() if k not in ('buffer','stages')}}
  assert fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa],(fifo7,fifo9)
+ if audio_fallback and load:
+  assert all(get(a7,0x04000400+i*16)==0 for i in range(16))
+  print('PASS unsupported sound resumes through muted restart plan',flush=True)
  if load and not (corrupt or identity or empty or TRACE):
   assert state['restored'] and state['cpclosed'];assert u.reg_read(UC_ARM_REG_PC)==pc
   assert bytes(u.mem_read(0x02030000,512))==capture[512+0x30000:512+0x30200]
@@ -391,6 +399,12 @@ if '--reuse' in sys.argv:
 else:
  print('Executing actual P4 save...',flush=True);a=make(disk,psg_first=TRACE or LIVE);print('PASS full capture, physical extent writes, payload/header CRC, audio shadow and FIFO replay',flush=True)
  privateModel.write_bytes(b''.join(disk[a] for a in physical))
+if '--audio-fallback-only' in sys.argv:
+ disk={physical[0]:bytes(blank)};struct.pack_into('<I',blank,12,0x454d4147);disk[physical[0]]=bytes(blank)
+ make(disk,audio_fallback=True,game_code=0x454d4147)
+ make(disk,True,True,audio_fallback=True,game_code=0x454d4147)
+ (f/'generic-audio-fallback-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'non_A2GJ_save_load':'PASS','unsupported_sound_muted_restore':'PASS'},indent=2))
+ raise SystemExit(0)
 if '--handoff-faults' in sys.argv:
  assert LIVE and '--reuse' in sys.argv and '--fast-io' in sys.argv
  slot=b''.join(disk[a] for a in physical)
