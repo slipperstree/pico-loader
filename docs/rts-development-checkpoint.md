@@ -27,12 +27,18 @@ an unrelated-history merge.
 
 | Ref in this repository | Code baseline | Evidence |
 | --- | --- | --- |
-| `rts-p5.0-2026-11-24` | P5.0, code `ba75af0` | Multi-game recognition and muted restore passed local integration/model tests; new-game hardware validation pending. |
+| `rts-p5.0-2026-11-24` | P5.0, code `ba75af0` | Multi-game recognition and muted restore passed local integration/model tests; user subsequently reported successful save/restore in several games (titles not recorded). |
 | `rts-p4.10-verified` | P4.10, `04ca8af` | User confirmed save, restore, and gameplay restoration from the title screen after restarting the tested A2GJ game on a 414/MSET 3DS. |
 
 The preceding research commits remain in the branch history, including the
 pause, snapshot, cache/IPC arbitration, first-save, and persistent-restore
 milestones. The original local research branches are retained too.
+
+## Menu development (stage 1)
+
+The new four-slot controller and renderer are tested separately and documented
+in [the menu checkpoint](rts-menu-stage1.md). They are not linked into the live
+loader. The installed P5.0 runtime and its hotkeys remain as described below.
 
 ## Current behavior
 
