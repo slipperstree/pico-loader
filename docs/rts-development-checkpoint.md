@@ -34,13 +34,15 @@ The preceding research commits remain in the branch history, including the
 pause, snapshot, cache/IPC arbitration, first-save, and persistent-restore
 milestones. The original local research branches are retained too.
 
-## Menu development (stage 1)
+## Menu development (P6)
 
-The new four-slot controller and renderer are tested separately and documented
-in [the menu checkpoint](rts-menu-stage1.md). They are not linked into the live
-loader. The installed P5.0 runtime and its hotkeys remain as described below.
+The initial standalone controller/renderer is recorded in [stage 1](rts-menu-stage1.md).
+[P6 integrates the four-slot LRA menu](rts-menu-p6.md), transient VRAM overlay,
+previews, RTC timestamps and configurable diagnostics. Its console verification
+is pending. P5.0 remains a named rollback point; its direct-hotkey behavior is
+retained below for reference.
 
-## Current behavior
+## P5 direct-hotkey behavior
 
 - Save: **L+R+Down+A**. Load: **L+R+Down+B**.
 - One `.rts` slot beside each ROM, using the ROM's basename and actual game ID.

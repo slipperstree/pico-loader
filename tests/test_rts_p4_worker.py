@@ -6,15 +6,15 @@ import hashlib,json,os,struct,subprocess,sys,zlib
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE,UC_HOOK_MEM_INVALID
 from unicorn.arm_const import *
-r=Path(sys.argv[1]).resolve();capture=Path(sys.argv[2]).read_bytes();h0=struct.unpack('<128I',capture[:512]);TRACE='--p43' in sys.argv;LIVE='--p49' in sys.argv;f=r/('build/rts-worker-p49' if LIVE else 'build/rts-worker-p43' if TRACE else 'build/rts-worker-p4')
-meta=json.loads((f/'RtsM2Image.json').read_text());original=(f/'worker.bin').read_bytes();base=0x023fa000;limit=base+meta['memory_bytes'];assert limit<=0x023ff000
+r=Path(sys.argv[1]).resolve();capture=Path(sys.argv[2]).read_bytes();h0=struct.unpack('<128I',capture[:512]);TRACE='--p43' in sys.argv;MENU='--p6' in sys.argv;LIVE='--p49' in sys.argv or MENU;stackbytes=1024;f=r/('build/rts-worker-p6' if MENU else 'build/rts-worker-p49' if LIVE else 'build/rts-worker-p43' if TRACE else 'build/rts-worker-p4')
+meta=json.loads((f/'RtsM2Image.json').read_text());original=(f/'worker.bin').read_bytes();base=0x023f8000 if MENU else 0x023fa000;limit=base+meta['memory_bytes'];assert limit<=0x023ff000
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful'))/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
-syms={p[2]:int(p[0],16)-meta['link_base']+base for l in subprocess.check_output([prefix+'nm',str(f/'worker.elf')],text=True).splitlines() if len(p:=l.split())==3}
+syms={p[2]:(int(p[0],16) if 0x06898000<=int(p[0],16)<0x068a0000 else int(p[0],16)-meta['link_base']+base) for l in subprocess.check_output([prefix+'nm',str(f/'worker.elf')],text=True).splitlines() if len(p:=l.split())==3}
 image=bytearray(original)
 for off in meta['relocations']:struct.pack_into('<I',image,off,(struct.unpack_from('<I',image,off)[0]+base-meta['link_base'])&0xffffffff)
 hook49=b'';tail7=wait7=0
 if LIVE:
- loader49=r/'build/picoLoader9_DSPICO_restore_p49.elf';raw49=f/'hook7.bin'
+ loader49=r/('build/picoLoader9_DSPICO_menu_p6.elf' if MENU else 'build/picoLoader9_DSPICO_restore_p49.elf');raw49=f/'hook7.bin'
  subprocess.run([prefix+'objcopy','--dump-section','patch_rts7='+str(raw49),str(loader49)],check=True)
  symbols49={p[2]:int(p[0],16) for l in subprocess.check_output([prefix+'nm',str(loader49)],text=True).splitlines() if len(p:=l.split())==3}
  hook49=raw49.read_bytes();tail7=0x0380bfa4+symbols49['rts7_restore_tail']-symbols49['__start_patch_rts7'];wait7=tail7+28
@@ -28,8 +28,12 @@ def get(u,a):return struct.unpack('<I',u.mem_read(a,4))[0]
 def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
+slot_physical=[physical,*[list(range(0x11000+i*0x4000,0x11000+i*0x4000+sectors)) for i in range(3)]]
+aux_physical=list(range(0x1d000,0x1d000+756))
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False,verify_load=False,scene_change=False,audio_fallback=False,game_code=0x4a473241):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False,verify_load=False,scene_change=False,audio_fallback=False,game_code=0x4a473241,menu_slot=0,menu_cancel=False,menu_debug=True):
+ physical=slot_physical[menu_slot] if MENU else globals()['physical']
+ allowed=set(sum(slot_physical,[])+aux_physical) if MENU else set(physical)
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -49,6 +53,24 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  cfg=syms['gRtsM2'];mail=syms['gRtsArm7Mailbox'];ctrl=syms['gRtsP4'];shadow=syms['gRtsSoundShadow'];stack=syms['gRtsM2Stack'];a7stack=syms['gRtsP4Arm7Stack']
  config=[0x30505452,0x40001,sectors,len(extents),0x800,0x10000,0x4a473241,0]
  for n,a in extents:config.extend((n,a))
+ if MENU:
+  maps=[]
+  for i in range(5):
+   layout=extents if i==0 else [(sectors,slot_physical[i][0])] if i<4 else [(756,aux_physical[0])]
+   data=[0x30505452,0x40001,sectors if i<4 else 756,len(layout),0x800,0x20000,game_code,0]
+   for count,sector in layout:data.extend((count,sector))
+   maps.extend(data+[0]*(72-len(data)))
+  put(u,syms['gRtsMenuCoreBoot'],0x36554d52,int(menu_debug),*maps[4*72:])
+  boot=struct.pack('<2I',0x36554d52,int(menu_debug))+struct.pack('<360I',*maps)
+  overlay=(f/'menu-overlay.bin').read_bytes();relocations=struct.pack('<'+'I'*len(meta['menu_relocations']),*meta['menu_relocations'])
+  for sector,raw in ((617,boot),(684,overlay),(748,relocations)):
+   for i in range((len(raw)+511)//512):disk[aux_physical[sector+i]]=raw[i*512:(i+1)*512].ljust(512,b'\0')
+  disk[aux_physical[616]]=struct.pack('<5I',0x36554d52,1,game_code,len(overlay),len(meta['menu_relocations'])).ljust(512,b'\0')
+  for layout in slot_physical:
+   if layout[0] not in disk:disk[layout[0]]=bytes(blank)
+  selected_header=words(disk.get(physical[0],bytes(blank)))
+  inputs=[0]+[key for _ in range(menu_slot) for key in (16,0)]
+  inputs+=([2,0] if menu_cancel else [1,0]+([64,0] if not load and selected_header[4]==2 else [])+[1,0])
  config+=[0]*(72-len(config));config[6]=game_code;put(u,cfg,*config,base,meta['memory_bytes']);put(u,cfg+296+76,6)
  if early_refusal:put(u,cfg+36,0x400)
  if refusal=='sd_busy':put(u,cfg+28,4096)
@@ -72,7 +94,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  # Source and fixture target use the same original saved gate ABI.
  put(u,ctrl+4,int(load));put(a7,ctrl+4,int(load))
  fifo9=[0x12345678,0x55aa55aa];fifo7=[0x90001234]
- state={'applying':False,'final_wait':False,'final_polls':0,'private7':False,'parking7':False,'private_restore_order':False,'server7':False,'exmem_writes':[],'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
+ state={'applying':False,'final_wait':False,'final_polls':0,'private7':False,'parking7':False,'private_restore_order':False,'server7':False,'exmem_writes':[],'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+stackbytes,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
  cp=dict(zip(cpkeys,cpvalues));cp[(6,2,0)]=0
  if mutate:
   u.mem_write(0x02030000,b'changed progress'*30);u.mem_write(0x06810000,b'\xcc'*512);a7.mem_write(0x03800100,b'\xdd'*512)
@@ -152,6 +174,8 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
     call7('RtsReleaseSoundRestart',[syms['gRtsP4Scratch'],syms['mmio']|1,0],True)
     park7()
     if private_ack_unready:state['peer']=0
+  elif MENU and command in (6,7):half(a7,0x04000500,get(cpu,shadow+464)&(0x7fff if command==6 else 0xffff))
+  elif MENU and command==8:cpu.mem_write(mail+32,struct.pack('<H6B',2026,11,24,16,23,45,0))
   else:raise AssertionError(command)
   put(cpu,mail+12,0);put(cpu,mail+8,req)
  u.hook_add(UC_HOOK_MEM_READ,rpc,begin=mail+8,end=mail+11)
@@ -188,7 +212,10 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   elif a==0x04100000:put(cpu,a,fifo9.pop(0))
   elif a==0x04000006:
    state['vcount']=(state['vcount']+17)%263;state['frames']+=1;half(cpu,a,state['vcount'])
-  elif a==0x04000130:half(cpu,a,0x3fd if state['frames']%8>=4 else 0x3ff)
+  elif a==0x04000130:
+   if MENU and get(cpu,syms['ui']+60):half(cpu,a,0x3ff^(inputs.pop(0) if inputs else (2 if state['frames']%8>=4 else 0)))
+   else:half(cpu,a,0x3fd if state['frames']%8>=4 else 0x3ff)
+  elif MENU and a==0x04000064:put(cpu,a,get(cpu,a)&0x7fffffff)
   elif a==0x04000180:
    half(cpu,a,0x4000|(state['own']<<8)|state['peer'])
    if state['final_wait']:
@@ -208,11 +235,12 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  def clock(cpu,ac,a,n,val,d):put(cpu,a,state['polls']//4096)
  u.hook_add(UC_HOOK_MEM_READ,clock,begin=syms['gRtsM2Frames'],end=syms['gRtsM2Frames']+3)
  def write(cpu,ac,a,n,val,d):
+  if MENU and 0x06800000<=a<0x068a4000:assert n!=1,('DS VRAM ignores byte stores',hex(a),hex(cpu.reg_read(UC_ARM_REG_PC)))
   if '--cache-check' in sys.argv and cache['after_clean'] and cp[(1,0,0)]&4 and 0x02000000<=a<0x02400000:
    before=bytes(cpu.mem_read(a,n))
    for i,byte in enumerate(before):cache['dirty'].setdefault(a+i,byte)
   spNow=cpu.reg_read(UC_ARM_REG_SP)
-  if stack<=spNow<=stack+1024:state['minsp9']=min(state['minsp9'],spNow)
+  if stack<=spNow<=stack+stackbytes:state['minsp9']=min(state['minsp9'],spNow)
   if a==0x04000204:
    state['exmem_writes'].append((val,state['server7']))
    if LIVE and load and val&0x8000 and state['private7']:state['private_restore_order']=True
@@ -246,10 +274,10 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   elif a==0x040001a4 and val&0x80000000:
    assert not cp[(1,0,0)]&4
    cmd=bytes(cpu.mem_read(0x040001a8,8));op=cmd[0];arg=int.from_bytes(cmd[4:],'big')
-   if op==0xe3:assert arg in physical;state['readsector']=arg;state['mode']='idle'
+   if op==0xe3:assert arg in allowed;state['readsector']=arg;state['mode']='idle'
    elif op==0xe4:state['mode']='poll'
    elif op==0xe5:state['mode']='read';state['word']=0
-   elif op==0xf6:assert arg in physical;state['sector']=arg;state['mode']='write';state['word']=0;state['buffer']=bytearray()
+   elif op==0xf6:assert arg in allowed;state['sector']=arg;state['mode']='write';state['word']=0;state['buffer']=bytearray()
    else:raise AssertionError(op)
   elif a==0x04100010:
    assert state['mode']=='write';state['buffer']+=struct.pack('<I',val);state['word']+=1
@@ -264,7 +292,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    exmem=struct.unpack('<H',cpu.mem_read(0x04000204,2))[0]
    assert not (state['server7'] and exmem&0x8000),('ARM9 shared main RAM access with ARM7 priority/server running',hex(a),hex(exmem),hex(cpu.reg_read(UC_ARM_REG_PC)))
   u.hook_add(UC_HOOK_MEM_READ|UC_HOOK_MEM_WRITE,bus,begin=0x02000000,end=0x023fffff)
- if '--fast-io' in sys.argv:
+ if '--fast-io' in sys.argv and not MENU:
   def fileRead(cpu,a,n,d):
    index=cpu.reg_read(UC_ARM_REG_R0);out=cpu.reg_read(UC_ARM_REG_R1)
    if partial and index==34 and (state['applying'] if LIVE else state['readcount']>=sectors):
@@ -277,6 +305,33 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    disk[physical[index]]=bytes(cpu.mem_read(src,512));state['writes']+=1
    cpu.reg_write(UC_ARM_REG_R0,1);cpu.reg_write(UC_ARM_REG_PC,cpu.reg_read(UC_ARM_REG_LR))
   u.hook_add(UC_HOOK_CODE,fileRead,begin=syms['readSector'],end=syms['readSector']);u.hook_add(UC_HOOK_CODE,fileWrite,begin=syms['writeSector'],end=syms['writeSector'])
+ if MENU and '--fast-io' in sys.argv:
+  def genericIo(cpu,a,n,is_write):
+   mapping=cpu.reg_read(UC_ARM_REG_R0);index=cpu.reg_read(UC_ARM_REG_R1);buffer=cpu.reg_read(UC_ARM_REG_R2)
+   count=get(cpu,mapping+12);position=index;sector=None
+   for i in range(count):
+    length,first=words(bytes(cpu.mem_read(mapping+32+i*8,8)))
+    if position<length:sector=first+position;break
+    position-=length
+   assert sector is not None
+   if is_write:disk[sector]=bytes(cpu.mem_read(buffer,512));state['writes']+=1
+   else:cpu.mem_write(buffer,disk.get(sector,b'\0'*512));state['readcount']+=1
+   cpu.reg_write(UC_ARM_REG_R0,1);cpu.reg_write(UC_ARM_REG_PC,cpu.reg_read(UC_ARM_REG_LR))
+  u.hook_add(UC_HOOK_CODE,genericIo,True,begin=syms['writeFileSector'],end=syms['writeFileSector'])
+  u.hook_add(UC_HOOK_CODE,genericIo,False,begin=syms['readFileSector'],end=syms['readFileSector'])
+ if MENU and '--skip-progress-render' in sys.argv:
+  def skipBusy(cpu,a,n,d):
+   menu=cpu.reg_read(UC_ARM_REG_R0)
+   if cpu.mem_read(menu+54,1)[0]==2:cpu.reg_write(UC_ARM_REG_PC,cpu.reg_read(UC_ARM_REG_LR))
+  u.hook_add(UC_HOOK_CODE,skipBusy,begin=syms['RtsMenuRender'],end=syms['RtsMenuRender'])
+ if '--fast-crc' in sys.argv:
+  # The nibble implementation is exercised without this option in baseline runs.
+  # Use the equivalent host CRC for long integration runs focused on state/I/O.
+  def fastCrc(cpu,a,n,d):
+   initial=cpu.reg_read(UC_ARM_REG_R0);source=cpu.reg_read(UC_ARM_REG_R1);count=cpu.reg_read(UC_ARM_REG_R2)
+   value=zlib.crc32(bytes(cpu.mem_read(source,count*4)),initial^0xffffffff)^0xffffffff
+   cpu.reg_write(UC_ARM_REG_R0,value);cpu.reg_write(UC_ARM_REG_PC,cpu.reg_read(UC_ARM_REG_LR))
+  u.hook_add(UC_HOOK_CODE,fastCrc,begin=syms['crc'],end=syms['crc'])
  if LIVE:
   def applying(cpu,a,n,d):state['applying']=True
   u.hook_add(UC_HOOK_CODE,applying,begin=syms['restoreDtcm'],end=syms['restoreDtcm'])
@@ -294,7 +349,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  for i,m in enumerate((31,18,19,23,27,17)):
   u.reg_write(UC_ARM_REG_CPSR,0xc0|m);u.reg_write(UC_ARM_REG_SP,h0[10]+0x3000+i*64);u.reg_write(UC_ARM_REG_LR,0x12340000+i*4)
   if m!=31:u.reg_write(UC_ARM_REG_SPSR,0x6000001f)
- u.reg_write(UC_ARM_REG_CPSR,0xdf);u.reg_write(UC_ARM_REG_SP,stack+1024);u.reg_write(UC_ARM_REG_LR,done9);u.reg_write(UC_ARM_REG_R0,entry)
+ u.reg_write(UC_ARM_REG_CPSR,0xdf);u.reg_write(UC_ARM_REG_SP,stack+stackbytes);u.reg_write(UC_ARM_REG_LR,done9);u.reg_write(UC_ARM_REG_R0,entry)
  def invalid(cpu,ac,a,n,val,d):raise AssertionError(('invalid',hex(a),n,hex(cpu.reg_read(UC_ARM_REG_PC)),hex(cpu.reg_read(UC_ARM_REG_SP)),hex(cpu.reg_read(UC_ARM_REG_CPSR)),state['stages'][-3:],state['restored']))
  u.hook_add(UC_HOOK_MEM_INVALID,invalid)
  try:u.emu_start(syms['rtsM2Run']|1,0,count=700000000)
@@ -346,6 +401,11 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  if audio_fallback and load:
   assert all(get(a7,0x04000400+i*16)==0 for i in range(16))
   print('PASS unsupported sound resumes through muted restart plan',flush=True)
+ if MENU and menu_cancel:
+  assert not state['restored'] and bytes(u.mem_read(0x06800000,0xa4000))==targetvideo[:0xa4000]
+  assert struct.unpack('<H',a7.mem_read(0x04000500,2))[0]==0x807f
+  assert state['writes']==596
+  print('PASS menu B cancellation restores every VRAM byte and sound master',flush=True);return state
  if load and not (corrupt or identity or empty or TRACE):
   assert state['restored'] and state['cpclosed'];assert u.reg_read(UC_ARM_REG_PC)==pc
   assert bytes(u.mem_read(0x02030000,512))==capture[512+0x30000:512+0x30200]
@@ -362,8 +422,8 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert [cp[k] for k in cpkeys]==list(hh[81:100]),'Final CP15 differs from captured CPU state'
   if LIVE:
    assert any(st==1 for st,_ in state['stages'])==verify_load,'Load CRC pass must be opt-in'
-   assert state['readcount']<(sectors+80 if not verify_load else sectors*2+80)
-   if not verify_load:assert state['readcount']<sectors+80,'Default load scanned payload twice'
+   assert state['readcount']<(sectors+(2000 if MENU else 80) if not verify_load else sectors*2+(2000 if MENU else 80))
+   if not verify_load:assert state['readcount']<sectors+(2000 if MENU else 80),'Default load scanned payload twice'
    for i in range(4):assert struct.unpack('<H',u.mem_read(0x04000102+i*4,2))[0]==((hh[124+i//2]>>((i&1)*16))&65535)
    assert struct.unpack('<H',u.mem_read(0x04000204,2))[0]==hh[39]
    print('PASS load mode',('full CRC + apply' if verify_load else 'single payload pass, no L1'),'scene configuration replaced' if scene_change else '',state['readcount'],'sector reads',flush=True)
@@ -371,7 +431,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert u.reg_read(UC_ARM_REG_SP)==hh[33] and u.reg_read(UC_ARM_REG_LR)==hh[34]
   assert u.reg_read(UC_ARM_REG_CPSR)==hh[36]|(32 if hh[34]&1 else 0)
   assert state['minsp9']>=stack,'ARM9 worker stack overflow'
-  print('Verified all RAM/TCM bytes, 19 CP15 registers, general registers, SP/LR/CPSR; maximum observed worker stack',stack+1024-state['minsp9'],flush=True)
+  print('Verified all RAM/TCM bytes, 19 CP15 registers, general registers, SP/LR/CPSR; maximum observed worker stack',stack+stackbytes-state['minsp9'],flush=True)
  elif load:
   assert not state['restored'] and not state['writes'];assert any(stage==8 for stage,_ in state['stages'])
   if TRACE:assert (8,1007) in state['stages']
@@ -381,7 +441,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   blob=b''.join(disk[a] for a in physical);h=words(blob[:512]);assert h[4]==2 and h[19]==6
   assert h[6]==zlib.crc32(blob[512:]);crc=bytearray(blob[:512]);struct.pack_into('<I',crc,480,0);assert h[120]==zlib.crc32(crc)
   assert blob[512+0x424400:512+0x4c9400]==targetvideo
-  assert state['writes']==sectors+1
+  assert state['writes']==sectors+1+(617 if MENU else 0)
   if psg_first:
    audio=words(blob[512+0x4c9400:512+0x4c9600])
    assert audio[84+11]==0x300 and audio[4+11*5+2]==0x10000-777 and audio[100+11]&0x80000000
@@ -393,12 +453,27 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    print('PASS ARM9 main RAM priority acquired before start and original EXMEM restored after ARM7 private ACK',flush=True)
  return state
 disk={physical[0]:bytes(blank)}
-privateModel=r.parent/'实机记录'/'P4-local-model.bin'
+privateModel=r.parent/'实机记录'/('P6-local-model.bin' if MENU else 'P4-local-model.bin')
 if '--reuse' in sys.argv:
  b=privateModel.read_bytes();disk={a:b[i*512:(i+1)*512] for i,a in enumerate(physical)}
 else:
  print('Executing actual P4 save...',flush=True);a=make(disk,psg_first=TRACE or LIVE);print('PASS full capture, physical extent writes, payload/header CRC, audio shadow and FIFO replay',flush=True)
  privateModel.write_bytes(b''.join(disk[a] for a in physical))
+if MENU and '--menu-cancel-only' in sys.argv:
+ make(disk,menu_cancel=True)
+ (f/'menu-full-transport-results.json').write_text(json.dumps({'cancel':'PASS','actual_sd_commands':'PASS','physical_hardware':False}))
+ raise SystemExit(0)
+if MENU:
+ print('Executing P6 cross-boot menu restore...',flush=True);make(disk,True,True,scene_change=True,menu_debug=False)
+ make(disk,menu_cancel=True)
+ for slot in (1,2,3):
+  print('Executing independent slot',slot+1,flush=True);make(disk,menu_slot=slot,menu_debug=False)
+  make(disk,True,True,menu_slot=slot,menu_debug=False)
+  m=words(disk[aux_physical[532+slot*21]])
+  assert m[:4]==(0x31544d52,1,0x4a473241,1)
+  assert disk[aux_physical[532+slot*21]][16:24]==struct.pack('<H6B',2026,11,24,16,23,45,0)
+ (f/'p6-model-results.json').write_text(json.dumps({'menu_save_restore_four_slots':'PASS','cross_boot_and_changed_scene':'PASS','cancel_vram_audio_restore':'PASS','metadata_timestamp':'PASS','debug_off':'PASS','worker_bytes':meta['memory_bytes'],'physical_hardware':False},indent=2))
+ print('PASS P6 integrated four-slot menu model',flush=True);raise SystemExit(0)
 if '--audio-fallback-only' in sys.argv:
  disk={physical[0]:bytes(blank)};struct.pack_into('<I',blank,12,0x454d4147);disk[physical[0]]=bytes(blank)
  make(disk,audio_fallback=True,game_code=0x454d4147)

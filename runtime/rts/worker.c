@@ -27,6 +27,9 @@ typedef uint8_t u8;
 #define WAIT_LIMIT 0x00400000u
 
 #include "worker-state.h"
+#ifdef PICO_RTS_MENU
+#include "RtsMenuRuntime.h"
+#endif
 _Static_assert(offsetof(WorkerState,base)==sizeof(RtsSnapshotInfo),"M2 workspace ABI");
 _Static_assert(offsetof(WorkerState,header)==sizeof(RtsSnapshotInfo)+8,"M2 header ABI");
 WorkerState gRtsM2;
@@ -71,6 +74,7 @@ static u8 glyph(u32 c,u32 x)
 }
 static void progressOpen(void)
 {
+#ifndef PICO_RTS_MENU
     WorkerState* s=&gRtsM2;
     s->oldDisplay=REG32(0x04000000);
     s->oldBrightness=REG16(0x0400006c);
@@ -81,9 +85,17 @@ static void progressOpen(void)
     REG32(0x04000000)=0x000a0000; // Main VRAM display, bank C.
     REG16(0x0400006c)=0;
     s->videoActive=1;
+#else
+    gRtsM2.oldDisplay=REG32(0x04000000);gRtsM2.oldBrightness=REG16(0x0400006c);gRtsM2.oldVramC=REG8(0x04000242);gRtsM2.videoActive=1;
+#endif
 }
 static void progress(u32 stage,u32 value)
 {
+    #ifdef PICO_RTS_MENU
+    extern int RtsMenuRuntimeIsActive(void);
+    if(gRtsMenuLoaded && RtsMenuRuntimeIsActive())RtsMenuRuntimeProgress(stage,value);
+    return;
+    #endif
     // 'M2 S5 0128/8288'. A stationary stage identifies where a fault happened.
     u8 text[15]={'M',
 #ifdef PICO_RTS_RESTORE_PROBE
@@ -122,8 +134,10 @@ static void progressClose(void)
 {
     WorkerState* s=&gRtsM2;
     if(!s->videoActive)return;
+#ifndef PICO_RTS_MENU
     volatile u16* fb=(volatile u16*)0x06840000;
     for(u32 y=0;y<RTS_PROGRESS_HEIGHT;++y)for(u32 x=0;x<RTS_PROGRESS_WIDTH;++x)fb[y*256+x]=s->videoBackup[y*RTS_PROGRESS_WIDTH+x];
+#endif
     REG32(0x04000000)=s->oldDisplay;
     REG16(0x0400006c)=s->oldBrightness;
     REG8(0x04000242)=s->oldVramC;
@@ -140,18 +154,17 @@ static u32 crc(u32 value,const u32* words,u32 count)
     }
     return value;
 }
-static int mapSector(u32 index,u32* result)
+static int mapFileSector(const RtsSnapshotInfo* m,u32 index,u32* result)
 {
-    RtsSnapshotInfo* m=&gRtsM2.info;
     if (m->magic!=RTS_M2_MAGIC || m->version!=RTS_M2_VERSION ||
-        m->fileSectors!=RTS_M2_FILE_SECTORS || !m->extentCount || m->extentCount>RTS_M2_MAX_EXTENTS ||
-        m->dataStart>=m->dataEnd || index>=RTS_M2_FILE_SECTORS)return 0;
+        (!m->fileSectors || m->fileSectors>RTS_M2_FILE_SECTORS) || !m->extentCount || m->extentCount>RTS_M2_MAX_EXTENTS ||
+        m->dataStart>=m->dataEnd || index>=m->fileSectors)return 0;
     u32 total=0;
     for (u32 i=0;i<m->extentCount;++i)
     {
         RtsM2Extent e=m->extents[i];
         if (!e.count || e.sector<m->dataStart || e.sector>=m->dataEnd || e.count>m->dataEnd-e.sector ||
-            e.count>RTS_M2_FILE_SECTORS-total)return 0;
+            e.count>m->fileSectors-total)return 0;
         for(u32 j=0;j<i;++j)
         {
             RtsM2Extent p=m->extents[j];
@@ -159,7 +172,7 @@ static int mapSector(u32 index,u32* result)
         }
         total+=e.count;
     }
-    if (total!=RTS_M2_FILE_SECTORS)return 0;
+    if (total!=m->fileSectors)return 0;
     for (u32 i=0;i<m->extentCount;++i)
     {
         RtsM2Extent e=m->extents[i];
@@ -168,6 +181,7 @@ static int mapSector(u32 index,u32* result)
     }
     return 0;
 }
+static int mapSector(u32 i,u32* result){return gRtsM2.info.fileSectors==RTS_M2_FILE_SECTORS && mapFileSector(&gRtsM2.info,i,result);}
 // A CPU-speed-independent deadline spans the entire sector transaction.
 // The spin fallback applies only if the independent ARM7 frame clock stops.
 static void beginIo(u32 sector)
@@ -214,11 +228,11 @@ static int ready(void)
     }
     return 0;
 }
-static int readSector(u32 index,u32* out)
+static int readFileSector(const RtsSnapshotInfo* m,u32 index,u32* out)
 {
     beginIo(index);
     u32 sector;
-    if(!mapSector(index,&sector)){ioState.error=1;return 0;}
+    if(!mapFileSector(m,index,&sector)){ioState.error=1;return 0;}
     command(0xe3,sector,0xa0406000);
     if(!waitBits(0x80000000,0,3) || !ready())return 0;
     command(0xe5,0,0xa1444000);
@@ -229,11 +243,11 @@ static int readSector(u32 index,u32* out)
     }
     return waitBits(0x80000000,0,3);
 }
-static int writeSector(u32 index,const u32* src)
+static int writeFileSector(const RtsSnapshotInfo* m,u32 index,const u32* src)
 {
     beginIo(index);
     u32 sector;
-    if(!mapSector(index,&sector)){ioState.error=1;return 0;}
+    if(!mapFileSector(m,index,&sector)){ioState.error=1;return 0;}
     command(0x9b0de1f6,sector,0xe1486000);
     for(u32 i=0;i<128;++i)
     {
@@ -242,6 +256,12 @@ static int writeSector(u32 index,const u32* src)
     }
     return waitBits(0x80000000,0,3) && ready();
 }
+static int readSector(u32 i,u32* p){return readFileSector(&gRtsM2.info,i,p);}
+static int writeSector(u32 i,const u32* p){return writeFileSector(&gRtsM2.info,i,p);}
+#ifdef PICO_RTS_MENU
+int RtsMenuRawRead(const RtsSnapshotInfo* m,u32 i,u32* p){return readFileSector(m,i,p);}
+int RtsMenuRawWrite(const RtsSnapshotInfo* m,u32 i,const u32* p){return writeFileSector(m,i,p);}
+#endif
 static void heartbeat(u32 index)
 {
     if((index&15)==0)
@@ -519,6 +539,10 @@ void rtsM2Run(const u32* entryRegs)
     progress(2,35);
 #endif
     if(p4Reason){progress(8,p4Reason);waitRefusalAck();goto cleanup;}
+    #ifdef PICO_RTS_MENU
+    RtsMenuLoadOverlay();
+    if(RtsMenuRuntimeOpen()==RTS_MENU_RESUME)goto cleanup;
+    #endif
     if(gRtsP4.operation)
     {
 #ifdef PICO_RTS_CPU_TRACE
@@ -571,7 +595,13 @@ void rtsM2Run(const u32* entryRegs)
 #endif
         else
         {
-            if(!RtsReadVideoSector(&gRtsVideo,index-0x424200/512-1,(u16*)s->readback,s->videoBackup))
+            if(!RtsReadVideoSector(&gRtsVideo,index-0x424200/512-1,(u16*)s->readback,
+#ifdef PICO_RTS_MENU
+                0
+#else
+                s->videoBackup
+#endif
+                ))
             {ioState.error=26;fault(8);}
             src=s->readback;
         }
@@ -610,7 +640,13 @@ void rtsM2Run(const u32* entryRegs)
     for(u32 i=0;i<128;++i)if(s->readback[i]!=((u32*)h)[i])fault(8);
 #ifdef PICO_RTS_RESTORE_PROBE
     gRtsP4SavedSequence=h->sequence;
+#ifdef PICO_RTS_MENU
+    RtsMenuRuntimeSaved(h->sequence);
+#endif
 cleanup:
+#ifdef PICO_RTS_MENU
+    if(gRtsMenuLoaded){RtsMenuRuntimeClose();RtsMenuUnloadOverlay();}
+#endif
     rtsP4ReplayCurrent();
 #endif
     REG32(CMD)=oldCommand0;REG32(CMD+4)=oldCommand1;

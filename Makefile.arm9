@@ -28,7 +28,7 @@ DEFINES		:= -DLIBTWL_ARM9 -DARM9 -DPICO_LOADER_TARGET_$(PLATFORM)
 
 ifeq ($(PICO_RTS_SNAPSHOT),1)
 DEFINES += -DPICO_RTS_PROBE -DPICO_RTS_SNAPSHOT
-INCLUDEDIRS += $(if $(filter 1,$(PICO_RTS_ARM7_CAPTURE)),$(if $(filter 1,$(PICO_RTS_VIDEO_CAPTURE)),$(if $(filter 1,$(PICO_RTS_RESTORE_PROBE)),$(if $(filter 1,$(PICO_RTS_LIVE_RESTORE)),build/rts-worker-p49,$(if $(filter 1,$(PICO_RTS_CPU_TRACE)),build/rts-worker-p43,build/rts-worker-p4)),build/rts-worker-m32),build/rts-worker-m3),build/rts-worker)
+INCLUDEDIRS += $(if $(filter 1,$(PICO_RTS_ARM7_CAPTURE)),$(if $(filter 1,$(PICO_RTS_VIDEO_CAPTURE)),$(if $(filter 1,$(PICO_RTS_RESTORE_PROBE)),$(if $(filter 1,$(PICO_RTS_LIVE_RESTORE)),$(if $(filter 1,$(PICO_RTS_MENU)),build/rts-worker-p6,build/rts-worker-p49),$(if $(filter 1,$(PICO_RTS_CPU_TRACE)),build/rts-worker-p43,build/rts-worker-p4)),build/rts-worker-m32),build/rts-worker-m3),build/rts-worker)
 endif
 
 ifeq ($(PICO_RTS_PROBE),1)
@@ -55,6 +55,10 @@ ifeq ($(PICO_RTS_LIVE_RESTORE),1)
 DEFINES += -DPICO_RTS_LIVE_RESTORE -DPICO_RTS_GENERIC_SOUND
 endif
 
+ifeq ($(PICO_RTS_MENU),1)
+DEFINES += -DPICO_RTS_MENU
+endif
+
 # Libraries
 # ---------
 
@@ -66,6 +70,9 @@ LIBDIRS		:= $(BLOCKSDS)/libs/libnds \
 # ---------------
 
 NAME		:= picoLoader9_$(PLATFORM)$(if $(filter 1,$(PICO_RTS_SNAPSHOT)),$(if $(filter 1,$(PICO_RTS_ARM7_CAPTURE)),$(if $(filter 1,$(PICO_RTS_VIDEO_CAPTURE)),$(if $(filter 1,$(PICO_RTS_RESTORE_PROBE)),$(if $(filter 1,$(PICO_RTS_LIVE_RESTORE)),_restore_p49,$(if $(filter 1,$(PICO_RTS_CPU_TRACE)),_trace_p43,_restore_p4)),_capture_m32),_capture_m3),_snapshot_m2),$(if $(filter 1,$(PICO_RTS_PROBE)),_rts_probe))
+ifeq ($(PICO_RTS_MENU),1)
+NAME := picoLoader9_$(PLATFORM)_menu_p6
+endif
 BUILDDIR	:= build/$(NAME)
 BIN     := $(NAME).bin
 ELF		:= build/$(NAME).elf

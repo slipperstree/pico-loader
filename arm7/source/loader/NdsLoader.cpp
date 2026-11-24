@@ -33,6 +33,9 @@
 #include "RtsSnapshotPrepare.h"
 #include <span>
 static RtsSnapshotInfo sRtsSnapshotInfo;
+#ifdef PICO_RTS_MENU
+static RtsMenuBoot sRtsMenuBoot;
+#endif
 #ifdef PICO_RTS_RESTORE_PROBE
 #include "RtsSha256.h"
 #include "RtsSavePath.h"
@@ -215,8 +218,13 @@ void NdsLoader::Load(BootMode bootMode)
 #ifdef PICO_RTS_RESTORE_PROBE
         if(_romPath)
         {
+#ifdef PICO_RTS_MENU
+            memset(&sRtsMenuBoot,0,sizeof(sRtsMenuBoot));
+            if(PrepareRtsMenuFiles(sRtsMenuBoot,_romPath,_romHeader.gameCode))sRtsSnapshotInfo=sRtsMenuBoot.slots[0];
+#else
             size_t capacity=strlen(_romPath)+5;auto path=std::make_unique<char[]>(capacity);
             if(RtsMakeSavePath(_romPath,path.get(),capacity))PrepareRtsSnapshotFile(sRtsSnapshotInfo,path.get(),_romHeader.gameCode);
+#endif
         }
 #else
         PrepareRtsSnapshotFile(sRtsSnapshotInfo);
@@ -609,6 +617,9 @@ void NdsLoader::ApplyArm7Patches()
     sendToArm9(_cheats ? _cheats->length : 0);
 #ifdef PICO_RTS_SNAPSHOT
     for (u32 value : std::span((const u32*)&sRtsSnapshotInfo,sizeof(sRtsSnapshotInfo)/4)) sendToArm9(value);
+#ifdef PICO_RTS_MENU
+    for(u32 value:std::span((const u32*)&sRtsMenuBoot,sizeof(sRtsMenuBoot)/4))sendToArm9(value);
+#endif
 #endif
 #ifdef PICO_RTS_RESTORE_PROBE
     for(u32 i=0;i<8;++i){u32 word;memcpy(&word,sP4Code+i*4,4);sendToArm9(word);}

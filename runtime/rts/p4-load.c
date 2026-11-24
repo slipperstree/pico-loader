@@ -2,6 +2,9 @@
 #include "RtsP4.h"
 #include "RtsArm7Restore.h"
 #include "worker-state.h"
+#ifdef PICO_RTS_MENU
+#include "RtsMenuRuntime.h"
+#endif
 typedef uint32_t u32;typedef uint16_t u16;typedef uint8_t u8;
 #define R32(a) (*(volatile u32*)(a))
 #define R16(a) (*(volatile u16*)(a))
@@ -178,13 +181,18 @@ static int guestRead(void* user,u32 a,void* out,u32 bytes)
 static void writeVideo(u32 offset,const u16* source)
 {
     WorkerState* s=&gRtsM2;u32 a,bank=9;u8 old=0;
+#ifdef PICO_RTS_MENU
+    if(RtsMenuRuntimeWriteVideo(offset,source))return;
+#endif
     if(offset<0xa4000)
     {
         bank=0;while(offset>=vramEnd[bank])++bank;
         old=R8(vramControl[bank]);R8(vramControl[bank])=0x80;(void)R8(vramControl[bank]);
         a=0x06800000+offset;
+        #ifndef PICO_RTS_MENU
         if(bank==2 && offset-0x40000<RTS_PROGRESS_HEIGHT*512)
             for(u32 i=0;i<RTS_PROGRESS_WIDTH;++i)s->videoBackup[(offset-0x40000)/512*RTS_PROGRESS_WIDTH+i]=source[i];
+        #endif
     }
     else a=(offset<0xa4800 ? 0x05000000 : 0x07000000)+((offset-0xa4000)&2047);
     for(u32 i=0;i<256;++i)R16(a+i*2)=source[i];
@@ -193,7 +201,12 @@ static void writeVideo(u32 offset,const u16* source)
 static void finishDisplay(const RtsVideoCapture* v)
 {
     WorkerState* s=&gRtsM2;
+#ifdef PICO_RTS_MENU
+    RtsMenuRuntimeFinishLoad();RtsMenuUnloadOverlay();
+#endif
+    #ifndef PICO_RTS_MENU
     for(u32 y=0;y<RTS_PROGRESS_HEIGHT;++y)for(u32 x=0;x<RTS_PROGRESS_WIDTH;++x)R16(0x06840000+y*512+x*2)=s->videoBackup[y*RTS_PROGRESS_WIDTH+x];
+    #endif
     for(u32 i=0;i<9;++i)R8(vramControl[i])=v->vram[i];
     for(u32 i=0;i<8;++i)R16(0x04000008+(i&3)*2+(i>=4 ? 0x1000 : 0))=v->bgControl[i];
     R16(0x04000304)=v->power;R32(0x04000000)=v->display[0];R32(0x04001000)=v->display[1];

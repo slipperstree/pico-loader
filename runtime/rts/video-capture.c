@@ -1,4 +1,7 @@
 #include "RtsVideoCapture.h"
+#ifdef PICO_RTS_MENU
+#include "RtsMenuRuntime.h"
+#endif
 typedef uint32_t u32;typedef uint16_t u16;
 #define REG32(a) (*(volatile u32*)(a))
 #define REG16(a) (*(volatile u16*)(a))
@@ -21,6 +24,9 @@ __attribute__((noinline)) int RtsReadVideoSector(const RtsVideoCapture* s,u32 se
 {
     if(s->magic!=RTS_VIDEO_MAGIC || sector>=(RTS_VIDEO_SECTION_BYTES-512)/512)return 0;
     u32 offset=sector*512,bank=9,address;
+#ifdef PICO_RTS_MENU
+    if(RtsMenuRuntimeReadVideo(offset,out))return 1;
+#endif
     uint8_t old=0;
     if(offset<RTS_VIDEO_VRAM_BYTES)
     {
@@ -36,7 +42,7 @@ __attribute__((noinline)) int RtsReadVideoSector(const RtsVideoCapture* s,u32 se
         REG8(control[bank])=old;(void)REG8(control[bank]);
         // Bank C has the live progress line. File must contain original game
         // pixels. A 512-byte sector is exactly one 256-pixel framebuffer row.
-        if(bank==2 && offset-0x40000<RTS_PROGRESS_HEIGHT*512)
+        if(backup && bank==2 && offset-0x40000<RTS_PROGRESS_HEIGHT*512)
             for(u32 i=0;i<RTS_PROGRESS_WIDTH;++i)out[i]=backup[(offset-0x40000)/512*RTS_PROGRESS_WIDTH+i];
     }
     return 1;

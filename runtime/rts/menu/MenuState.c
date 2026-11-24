@@ -41,6 +41,7 @@ void RtsMenuFinish(RtsMenu* m){m->percent=100;m->phase=RTS_MENU_CLOSED;}
 static void two(char* p,unsigned x){p[0]='0'+(x/10)%10;p[1]='0'+x%10;}
 void RtsMenuFormatTime(const RtsMenuTime* t,char date[11],char clock[9])
 {
+ if(!t->year){const char* d="----/--/--",*c="--:--:--";for(unsigned i=0;i<11;++i)date[i]=d[i];for(unsigned i=0;i<9;++i)clock[i]=c[i];return;}
  unsigned y=t->year;two(date,y/100);two(date+2,y);date[4]='/';two(date+5,t->month);date[7]='/';two(date+8,t->day);date[10]=0;
  two(clock,t->hour);clock[2]=':';two(clock+3,t->minute);clock[5]=':';two(clock+6,t->second);clock[8]=0;
 }

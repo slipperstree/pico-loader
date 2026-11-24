@@ -1,5 +1,8 @@
 # Four-slot save/load menu: stage 1
 
+Historical module checkpoint: [P6 now integrates the menu](rts-menu-p6.md).
+The standalone status below describes stage 1, before P6 integration.
+
 This checkpoint adds an isolated, freestanding C controller and RGB555 renderer.
 It is **not linked into the live loader**. Building and installing the current
 loader still produces the P5.0 behavior: one `.rts` file per ROM, save with

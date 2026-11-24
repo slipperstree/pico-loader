@@ -13,7 +13,9 @@ typedef struct {
 #else
     uint32_t readback[128];
 #endif
+    #ifndef PICO_RTS_MENU
     uint16_t videoBackup[RTS_PROGRESS_WIDTH*RTS_PROGRESS_HEIGHT];
+    #endif
     uint32_t oldDisplay;
     uint16_t oldBrightness;
     uint8_t oldVramC,videoActive;

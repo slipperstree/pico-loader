@@ -78,6 +78,24 @@ int main(int argc,char** argv){
     check(f_unlink(RTS_P4_LOAD_VERIFY_PATH));assert(PrepareRtsSnapshotFile(info) && !(info.reserved&RTS_P4_CONFIG_LOAD_VERIFY));
     puts("PASS load CRC opt-in: missing/fast/invalid off; full/BOM+CRLF on; independent save option");
 #endif
+#ifdef PICO_RTS_MENU
+    RtsMenuBoot menu;assert(PrepareRtsMenuFiles(menu,"/中文目录/逆转裁判2.nds",RTS_M2_GAME));
+    assert(menu.magic==RTS_MENU_BOOT_MAGIC && menu.debug==1);
+    const char* paths[]={"/中文目录/逆转裁判2.rts","/中文目录/逆转裁判2.rts2","/中文目录/逆转裁判2.rts3","/中文目录/逆转裁判2.rts4","/中文目录/逆转裁判2.rts-menu"};
+    for(unsigned i=0;i<5;++i){FIL slot;check(f_open(&slot,paths[i],FA_READ));assert(f_size(&slot)==(i==4 ? RTS_MENU_AUX_SECTORS*512 : RTS_M2_FILE_BYTES));check(f_close(&slot));
+      const auto& map=i==4 ? menu.aux : menu.slots[i];unsigned total=0;for(unsigned j=0;j<map.extentCount;++j)total+=map.extents[j].count;assert(total==(i==4 ? RTS_MENU_AUX_SECTORS : RTS_M2_FILE_SECTORS));
+      for(unsigned k=0;k<i;++k)for(unsigned a=0;a<map.extentCount;++a)for(unsigned b=0;b<menu.slots[k].extentCount;++b){auto x=map.extents[a],y=menu.slots[k].extents[b];assert(x.sector>=y.sector+y.count || y.sector>=x.sector+x.count);}}
+    FIL marker;check(f_open(&marker,paths[2],FA_WRITE));check(f_lseek(&marker,512));write(&marker,"KEPT",4);check(f_close(&marker));
+    assert(PrepareRtsMenuFiles(menu,"/中文目录/逆转裁判2.nds",RTS_M2_GAME));
+    check(f_open(&marker,paths[2],FA_READ));check(f_lseek(&marker,512));char seenMarker[4];UINT markerCount=0;check(f_read(&marker,seenMarker,4,&markerCount));check(f_close(&marker));assert(markerCount==4 && !std::memcmp(seenMarker,"KEPT",4));
+    for(const char* value:{"off\r\n","  OFF\n","0","on","unknown","\xef\xbb\xbf" "off\n"})
+    {check(f_open(&mode,RTS_MENU_DEBUG_PATH,FA_CREATE_ALWAYS|FA_WRITE));write(&mode,value,(UINT)std::strlen(value));check(f_close(&mode));assert(PrepareRtsMenuFiles(menu,"/中文目录/逆转裁判2.nds",RTS_M2_GAME));assert(menu.debug==(!std::strcmp(value,"on") || !std::strcmp(value,"unknown")));}
+    check(f_unlink(RTS_MENU_DEBUG_PATH));
+    check(f_open(&marker,paths[4],FA_WRITE));check(f_lseek(&marker,RTS_MENU_AUX_HEADER_SECTOR*512));write(&marker,"NOPE",4);check(f_close(&marker));
+    assert(!PrepareRtsMenuFiles(menu,"/中文目录/逆转裁判2.nds",RTS_M2_GAME) && !menu.magic);
+    for(const char* path:paths)check(f_unlink(path));
+    puts("PASS four Chinese-named slots + auxiliary map, independent extents, payload preservation, debug config and foreign-aux rejection");
+#endif
     FIL f;check(f_open(&f,RTS_M2_FILE_PATH,FA_READ));assert(f_size(&f)==RTS_M2_FILE_BYTES);check(f_close(&f));
     unsigned sum=0;for(unsigned i=0;i<info.extentCount;++i){assert(info.extents[i].sector>=info.dataStart);assert(info.extents[i].count<=info.dataEnd-info.extents[i].sector);sum+=info.extents[i].count;}assert(sum==RTS_M2_FILE_SECTORS);
     unsigned last=info.extents[info.extentCount-1].sector+info.extents[info.extentCount-1].count-1;

@@ -9,6 +9,9 @@ checklibtwl:
 
 ifeq ($(PICO_RTS_SNAPSHOT),1)
 loader9: rtsWorker
+ifeq ($(PICO_RTS_MENU),1)
+loader7: rtsWorker
+endif
 endif
 
 rtsWorker:

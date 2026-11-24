@@ -18,7 +18,7 @@ _Static_assert(sizeof(RtsVideoCapture)==512,"display metadata ABI");
 int RtsPrepareVideoCapture(RtsVideoCapture*,uint32_t brightnessMain,uint32_t brightnessSub);
 // One sector after metadata: VRAM A-I, standard palettes, OAM. Changes only
 // one bank's mapping temporarily, restoring its live mapping before return.
-int RtsReadVideoSector(const RtsVideoCapture*,uint32_t sector,uint16_t out[256],const uint16_t progressBackup[768]);
+int RtsReadVideoSector(const RtsVideoCapture*,uint32_t sector,uint16_t out[256],const uint16_t* progressBackup);
 #ifdef __cplusplus
 }
 #endif

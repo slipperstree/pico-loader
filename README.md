@@ -123,3 +123,7 @@ Additional licenses may apply to the project. For details, see the `license` dir
 This branch also preserves the opt-in P5.0 save-state experiment and its
 verified P4.10 rollback baseline. See the [development checkpoint](docs/rts-development-checkpoint.md)
 for build flags, matching Chinese-capable launcher sources, validation, and recovery.
+
+The opt-in [P6 four-slot S/L Menu](docs/rts-menu-p6.md) adds an L+R+A menu,
+previews, timestamps and configurable diagnostics. It is an experimental
+console-test build; the P5.0 and P4.10 rollback tags are preserved.

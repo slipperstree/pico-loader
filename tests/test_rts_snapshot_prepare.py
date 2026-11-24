@@ -2,17 +2,21 @@
 import os,shutil,struct,subprocess,sys
 from pathlib import Path
 root=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parents[1]
-P4='--p4' in sys.argv
+MENU='--p6' in sys.argv
+P4='--p4' in sys.argv or MENU
 M32='--m32' in sys.argv or P4
 M3='--m3' in sys.argv or M32
-work=root/('build/rts-fatfs-test-p4' if P4 else 'build/rts-fatfs-test-m32' if M32 else 'build/rts-fatfs-test-m3' if M3 else 'build/rts-fatfs-test');work.mkdir(parents=True,exist_ok=True)
+work=root/('build/rts-fatfs-test-p6' if MENU else 'build/rts-fatfs-test-p4' if P4 else 'build/rts-fatfs-test-m32' if M32 else 'build/rts-fatfs-test-m3' if M3 else 'build/rts-fatfs-test');work.mkdir(parents=True,exist_ok=True)
 stage=Path(__file__).parent
 for name in ('ff.c','ff.h','ffconf.h','diskio.h','ffunicode.c'):
     target=work/'fat'/name;target.parent.mkdir(exist_ok=True);shutil.copyfile(root/'arm7/source/fat'/name,target)
 for name in ('RtsSnapshotPrepare.cpp','RtsSnapshotPrepare.h'):
     shutil.copyfile(root/'arm7/source/loader'/name,work/name)
 shutil.copyfile(root/'common/RtsSnapshotInfo.h',work/'RtsSnapshotInfo.h')
-(work/'common.h').write_text('#pragma once\n#include <cstdint>\nusing u32=uint32_t;\n')
+(work/'common.h').write_text('#pragma once\n#include <cstdint>\nusing u32=uint32_t;using u8=uint8_t;\n')
+if MENU:
+    shutil.copyfile(root/'build/rts-worker-p6/RtsMenuOverlay.h',work/'RtsMenuOverlay.h')
+    for name in ('RtsMenu.h','RtsMenuRuntime.h','RtsSavePath.h'):shutil.copyfile(root/'common'/name,work/name)
 harness=stage/'fatfs_harness.cpp'
 if not harness.exists():harness=root/'tests/rts_fatfs_harness.cpp'
 shutil.copyfile(harness,work/'harness.cpp')
@@ -21,7 +25,7 @@ cxx=os.environ.get('CXX','C:/msys64/mingw64/bin/g++.exe' if os.name=='nt' else '
 for name in ('ff','ffunicode'):
     subprocess.run([cc,'-std=c17','-O2','-I'+str(work/'fat'),'-c',str(work/'fat'/(name+'.c')),'-o',str(work/(name+'.o'))],check=True)
 exe=work/('test.exe' if os.name=='nt' else 'test')
-subprocess.run([cxx,'-std=c++23','-static','-DPICO_RTS_SNAPSHOT',*(['-DPICO_RTS_RESTORE_PROBE'] if P4 else []),*(['-DPICO_RTS_ARM7_CAPTURE'] if M3 else []),*(['-DPICO_RTS_VIDEO_CAPTURE'] if M32 else []),'-I'+str(work),str(work/'harness.cpp'),str(work/'RtsSnapshotPrepare.cpp'),str(work/'ff.o'),str(work/'ffunicode.o'),'-o',str(exe)],check=True)
+subprocess.run([cxx,'-std=c++23','-static','-DPICO_RTS_SNAPSHOT',*(['-DPICO_RTS_MENU',str(root/'common/RtsSavePath.c')] if MENU else []),*(['-DPICO_RTS_RESTORE_PROBE'] if P4 else []),*(['-DPICO_RTS_ARM7_CAPTURE'] if M3 else []),*(['-DPICO_RTS_VIDEO_CAPTURE'] if M32 else []),'-I'+str(work),str(work/'harness.cpp'),str(work/'RtsSnapshotPrepare.cpp'),str(work/'ff.o'),str(work/'ffunicode.o'),'-o',str(exe)],check=True)
 image=work/'isolated-fat32.img'
 sectors=131072;fat_sectors=1024
 boot=bytearray(512);boot[0:3]=b'\xeb\x58\x90';boot[3:11]=b'MSWIN4.1'

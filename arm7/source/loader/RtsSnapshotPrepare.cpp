@@ -124,4 +124,99 @@ bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path,uint32_t game
     info.magic=RTS_M2_MAGIC; // Publish only a complete, closed and synced mapping.
     return true;
 }
+
+#ifdef PICO_RTS_MENU
+#include "RtsSavePath.h"
+#include "RtsMenuOverlay.h"
+static bool mapMenuAux(FIL& file,RtsSnapshotInfo& info,uint32_t gameCode)
+{
+    auto close = [&]() { return f_close(&file)==FR_OK; };
+    DWORD map[RTS_M2_MAX_EXTENTS*2+2] {};
+    map[0]=sizeof(map)/sizeof(map[0]);
+    file.cltbl=map;
+    if (f_lseek(&file,CREATE_LINKMAP)!=FR_OK) {file.cltbl=nullptr;close();return false;}
+    const auto fs=file.obj.fs;
+    if (fs->csize==0 || (fs->csize & (fs->csize-1)) || fs->n_fatent<3) {close();return false;}
+    uint64_t end=(uint64_t)fs->database+(uint64_t)(fs->n_fatent-2)*fs->csize;
+    if (end>UINT32_MAX) {close();return false;}
+    info.dataStart=fs->database;
+    info.dataEnd=(u32)end;
+    u32 left=RTS_MENU_AUX_SECTORS;
+    for (u32 i=1; i+1<sizeof(map)/sizeof(map[0]) && map[i]; i+=2)
+    {
+        u32 clusters=map[i], cluster=map[i+1];
+        if (!left || info.extentCount>=RTS_M2_MAX_EXTENTS || cluster<2 || cluster>=fs->n_fatent ||
+            clusters>fs->n_fatent-cluster) {close();return false;}
+        uint64_t first=(uint64_t)fs->database+(uint64_t)(cluster-2)*fs->csize;
+        uint64_t count=(uint64_t)clusters*fs->csize;
+        if (first<info.dataStart || first+count>info.dataEnd) {close();return false;}
+        u32 take=count>left ? left : (u32)count;
+        for (u32 j=0;j<info.extentCount;++j)
+        {
+            auto e=info.extents[j];
+            if (first<(uint64_t)e.sector+e.count && e.sector<first+take) {close();return false;}
+        }
+        info.extents[info.extentCount++]={take,(u32)first};
+        left-=take;
+    }
+    file.cltbl=nullptr;
+    if (!close() || left) {memset(&info,0,sizeof(info));return false;}
+
+    info.version=RTS_M2_VERSION;info.fileSectors=RTS_MENU_AUX_SECTORS;
+    info.gameCode=gameCode;info.magic=RTS_M2_MAGIC;return true;
+}
+bool PrepareRtsMenuFiles(RtsMenuBoot& boot,const char* rom,uint32_t gameCode)
+{
+    memset(&boot,0,sizeof(boot));boot.debug=1;
+    if(!rom)return false;
+    size_t capacity=strlen(rom)+16;auto path=std::make_unique<char[]>(capacity);
+    if(!RtsMakeSavePath(rom,path.get(),capacity))return false;
+    size_t stem=strlen(path.get());
+    for(unsigned slot=0;slot<4;++slot)
+    {
+        if(slot){path[stem]='1'+slot;path[stem+1]=0;}
+        if(!PrepareRtsSnapshotFile(boot.slots[slot],path.get(),gameCode))return false;
+    }
+    memcpy(path.get()+stem,"-menu",6);
+    FIL file;if(f_open(&file,path.get(),FA_OPEN_ALWAYS|FA_READ|FA_WRITE)!=FR_OK)return false;
+    auto buffer=std::make_unique<u32[]>(128);UINT count=0;
+    if(!f_size(&file))
+    {
+        memset(buffer.get(),0,512);
+        for(unsigned i=0;i<RTS_MENU_AUX_SECTORS;++i)
+            if(f_write(&file,buffer.get(),512,&count)!=FR_OK || count!=512){f_close(&file);return false;}
+        buffer[0]=RTS_MENU_BOOT_MAGIC;buffer[1]=1;buffer[2]=gameCode;
+        if(f_lseek(&file,RTS_MENU_AUX_HEADER_SECTOR*512)!=FR_OK || f_write(&file,buffer.get(),512,&count)!=FR_OK || count!=512 || f_sync(&file)!=FR_OK){f_close(&file);return false;}
+    }
+    if(f_size(&file)!=RTS_MENU_AUX_SECTORS*512 || f_lseek(&file,RTS_MENU_AUX_HEADER_SECTOR*512)!=FR_OK ||
+       f_read(&file,buffer.get(),512,&count)!=FR_OK || count!=512 || buffer[0]!=RTS_MENU_BOOT_MAGIC || buffer[1]!=1 || buffer[2]!=gameCode)
+    {f_close(&file);return false;}
+    if(!mapMenuAux(file,boot.aux,gameCode))return false;
+    if(f_open(&file,RTS_MENU_DEBUG_PATH,FA_READ)==FR_OK)
+    {
+        char text[32]{};count=0;
+        if(f_read(&file,text,31,&count)==FR_OK)
+        {
+            const char* value=text;if(count>=3 && (u8)text[0]==239 && (u8)text[1]==187 && (u8)text[2]==191)value+=3;
+            while(*value==' ' || *value=='\t' || *value=='\r' || *value=='\n')++value;
+            auto match=[&](const char* expected){const char* p=value;while(*expected && ((*p|32)==*expected)){++p;++expected;}if(*expected)return false;while(*p==' ' || *p=='\r' || *p=='\n' || *p=='\t')++p;return !*p;};
+            boot.debug=!(match("off") || match("0"));
+        }
+        f_close(&file);
+    }
+    boot.magic=RTS_MENU_BOOT_MAGIC;
+    if(f_open(&file,path.get(),FA_READ|FA_WRITE)!=FR_OK){boot.magic=0;return false;}
+    bool ok=true;
+    auto put=[&](u32 sector,const void* data,u32 bytes){return f_lseek(&file,sector*512)==FR_OK && f_write(&file,data,bytes,&count)==FR_OK && count==bytes;};
+    if(!put(RTS_MENU_MAP_SECTOR,&boot,sizeof(boot)))ok=false;
+    if(!put(RTS_MENU_IMAGE_SECTOR,RTS_MENU_OVERLAY_IMAGE,sizeof(RTS_MENU_OVERLAY_IMAGE)))ok=false;
+    if(!put(RTS_MENU_RELOC_SECTOR,RTS_MENU_OVERLAY_RELOCS,sizeof(RTS_MENU_OVERLAY_RELOCS)))ok=false;
+    memset(buffer.get(),0,512);buffer[0]=RTS_MENU_BOOT_MAGIC;buffer[1]=1;buffer[2]=gameCode;
+    buffer[3]=sizeof(RTS_MENU_OVERLAY_IMAGE);buffer[4]=sizeof(RTS_MENU_OVERLAY_RELOCS)/4;
+    if(!put(RTS_MENU_AUX_HEADER_SECTOR,buffer.get(),512) || f_sync(&file)!=FR_OK)ok=false;
+    if(f_close(&file)!=FR_OK)ok=false;
+    if(!ok)boot.magic=0;
+    return ok;
+}
+#endif
 #endif

@@ -1,6 +1,9 @@
 #include "RtsP4.h"
 #include "RtsArm7Restore.h"
 #include "worker-state.h"
+#ifdef PICO_RTS_MENU
+#include "RtsMenuRuntime.h"
+#endif
 typedef uint32_t u32;typedef uint16_t u16;
 #define R32(a) (*(volatile u32*)(a))
 #define R16(a) (*(volatile u16*)(a))
@@ -118,6 +121,11 @@ void rtsP4Arm7Loop(u32 originalIpc,u32 operation)
             rtsEnterArm7Continuation((const RtsArm7Context*)&m->context);stop();
 #endif
         }
+#ifdef PICO_RTS_MENU
+        else if(command==6)R16(0x04000500)=gRtsSoundShadow.reserved[16]&0x7fff;
+        else if(command==7)R16(0x04000500)=gRtsSoundShadow.reserved[16]&0xffff;
+        else if(command==8)RtsMenuReadClock7((void*)m->data);
+#endif
         else error=3;
         m->status=error;m->completed=request;
     }

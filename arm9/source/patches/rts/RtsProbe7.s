@@ -47,7 +47,7 @@ rts7_keys:
     ldr r0, rts7_keyinput
     ldrh r1, [r0]
     ldr r2, rts7_hotkey
-#ifdef PICO_RTS_RESTORE_PROBE
+#if defined(PICO_RTS_RESTORE_PROBE) && !defined(PICO_RTS_MENU)
     tst r1,r2
     moveq r3,#0
     beq 80f
@@ -315,7 +315,12 @@ rts7_ipc: .word 0x04000180
 rts7_card: .word 0x040001a4
 rts7_ime: .word 0x04000208
 rts7_vcount: .word 0x04000006
-rts7_hotkey: .word 0x381
+rts7_hotkey:
+#ifdef PICO_RTS_MENU
+.word 0x301
+#else
+.word 0x381
+#endif
 rts7_nibble_mask: .word 0xf0f
 rts7_hold_count: .word 0
 rts7_fired: .word 0

@@ -31,6 +31,18 @@ RTS_BUILD := build/rts-worker-p49
 RTS_EXTRA_FLAGS += -DPICO_RTS_LIVE_RESTORE -DPICO_RTS_GENERIC_SOUND -Oz
 RTS_TRACE_AS_FLAGS += -Wa,--defsym,RTS_LIVE_RESTORE=1,--defsym,RTS_GENERIC_SOUND=1
 endif
+ifeq ($(PICO_RTS_MENU),1)
+ifneq ($(PICO_RTS_LIVE_RESTORE),1)
+$(error PICO_RTS_MENU requires PICO_RTS_LIVE_RESTORE)
+endif
+RTS_EXTRA_OBJ := $(subst build/rts-worker-p49/,build/rts-worker-p6/,$(RTS_EXTRA_OBJ))
+RTS_BUILD := build/rts-worker-p6
+RTS_EXTRA_FLAGS += -DPICO_RTS_MENU
+RTS_EXTRA_OBJ += $(addprefix $(RTS_BUILD)/,menu-state.o menu-render.o menu-runtime.o menu-rtc7.o menu-core.o)
+RTS_LINK_LIBS := -lgcc
+RTS_ENTRY_FLAGS := -Wa,--defsym,RTS_MENU=1
+endif
+
 RTS_FLAGS := -mcpu=arm946e-s -marm -Os -ffreestanding -fno-builtin -fno-jump-tables -fno-stack-protector -fno-pic -fno-tree-loop-distribute-patterns -ffunction-sections -fdata-sections -Icommon -Wall -Wextra
 
 RTS_FLAGS += $(if $(filter 1,$(PICO_RTS_LIVE_RESTORE)),-Oz)
@@ -69,16 +81,27 @@ $(RTS_BUILD)/p4-arm7-entry.o: runtime/rts/p4-arm7-entry.s
 $(RTS_BUILD)/p4-load.o: runtime/rts/p4-load.c
 	$(PREFIX)gcc $(RTS_FLAGS) -mthumb $(RTS_EXTRA_FLAGS) -fstack-usage -c $< -o $@
 
-$(RTS_BUILD)/entry.o: runtime/rts/worker-entry.s
+$(RTS_BUILD)/menu-core.o: runtime/rts/menu/MenuCore.c
+	$(PREFIX)gcc $(RTS_FLAGS) -mthumb $(RTS_EXTRA_FLAGS) -Iruntime/rts -fstack-usage -c $< -o $@
+$(RTS_BUILD)/menu-state.o: runtime/rts/menu/MenuState.c
+	$(PREFIX)gcc $(RTS_FLAGS) -mthumb $(RTS_EXTRA_FLAGS) -fstack-usage -c $< -o $@
+$(RTS_BUILD)/menu-render.o: runtime/rts/menu/MenuRender.c
+	$(PREFIX)gcc $(RTS_FLAGS) -mthumb $(RTS_EXTRA_FLAGS) -fstack-usage -c $< -o $@
+$(RTS_BUILD)/menu-runtime.o: runtime/rts/menu/MenuRuntime.c
+	$(PREFIX)gcc $(RTS_FLAGS) -mthumb $(RTS_EXTRA_FLAGS) -Iruntime/rts -fstack-usage -c $< -o $@
+$(RTS_BUILD)/menu-rtc7.o: runtime/rts/menu/Rtc7.c
+	$(PREFIX)gcc -mcpu=arm7tdmi -mthumb -Oz -ffreestanding -fno-builtin -fstack-usage -Icommon -c $< -o $@
+
+$(RTS_BUILD)/entry.o: runtime/rts/worker-entry.s Makefile.rts-worker
 	mkdir -p $(RTS_BUILD)
-	$(PREFIX)gcc $(RTS_FLAGS) -c $< -o $@
+	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_ENTRY_FLAGS) -c $< -o $@
 
 $(RTS_BUILD)/arm7-capture.o: runtime/rts/arm7-capture.s
 	mkdir -p $(RTS_BUILD)
 	$(PREFIX)gcc -mcpu=arm7tdmi -marm $(RTS_TRACE_AS_FLAGS) -c $< -o $@
 
 $(RTS_BUILD)/worker.elf: $(RTS_BUILD)/entry.o $(RTS_BUILD)/worker.o $(RTS_EXTRA_OBJ) runtime/rts/worker.ld
-	$(PREFIX)gcc -mcpu=arm946e-s -marm -nostdlib -Wl,--emit-relocs,--gc-sections,--build-id=none -T runtime/rts/worker.ld $(RTS_BUILD)/entry.o $(RTS_BUILD)/worker.o $(RTS_EXTRA_OBJ) -o $@
+	$(PREFIX)gcc -mcpu=arm946e-s -marm -nostdlib -Wl,--emit-relocs,--gc-sections,--build-id=none -T runtime/rts/worker.ld $(RTS_BUILD)/entry.o $(RTS_BUILD)/worker.o $(RTS_EXTRA_OBJ) $(RTS_LINK_LIBS) -o $@
 
 $(RTS_BUILD)/RtsM2Image.h: $(RTS_BUILD)/worker.elf tools/build_rts_image.py $(RTS_IDENTITY_INPUTS)
 	python tools/build_rts_image.py $< $@ $(PREFIX)

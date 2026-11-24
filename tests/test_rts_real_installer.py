@@ -9,7 +9,7 @@ from unicorn.arm_const import *
 full='--full' in sys.argv
 anyrom='--any-rom' in sys.argv
 loadcrc='--load-crc' in sys.argv
-root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);TRACE='--p43' in sys.argv;LIVE='--p49' in sys.argv;P4='--p4' in sys.argv or TRACE or LIVE;M32='--m32' in sys.argv or P4;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_restore_p49.elf' if LIVE else 'build/picoLoader9_DSPICO_trace_p43.elf' if TRACE else 'build/picoLoader9_DSPICO_restore_p4.elf' if P4 else 'build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
+root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);TRACE='--p43' in sys.argv;MENU='--p6' in sys.argv;LIVE='--p49' in sys.argv or MENU;P4='--p4' in sys.argv or TRACE or LIVE;M32='--m32' in sys.argv or P4;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_menu_p6.elf' if MENU else 'build/picoLoader9_DSPICO_restore_p49.elf' if LIVE else 'build/picoLoader9_DSPICO_trace_p43.elf' if TRACE else 'build/picoLoader9_DSPICO_restore_p4.elf' if P4 else 'build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
 # This optional integration test uses a separately supplied, exact A2GJ image.
 # No ROM data or extracted game code is written into the repository.
 assert anyrom or hashlib.sha256(rompath.read_bytes()).hexdigest()=='85e0e265a9d855a5d156a09794571b93fb13eab616814d5df49e9fcec01277fb', 'Unexpected test ROM'
@@ -80,6 +80,10 @@ sectors=(0x4c9800 if P4 else 0x4c9600 if M32 else 0x424400 if M3 else 0x40c200)/
 words=[0x30505452 if P4 else 0x32565452 if M32 else 0x31435452 if M3 else 0x324d5452,0x40001 if P4 else 0x30002 if M32 else 0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,int.from_bytes(header[12:16],'little'),0,sectors,0x1000]+[0]*62
 words[7]=(0x80000000 if full else 0)|(0x40000000 if loadcrc else 0)
 u.mem_write(symbols['gRtsSnapshotInfo'],struct.pack('<72I',*words))
+if MENU:
+    # Boot transfer fixture: all mapping bytes must survive the real relocation.
+    menu=struct.pack('<2I',0x36554d52,1)+struct.pack('<72I',*words)*5
+    u.mem_write(symbols['gRtsMenuLoaderBoot'],menu)
 if P4:u.mem_write(symbols['gRtsP4LoaderIdentity'],bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')+b'\0'*48)
 def prompt(uc,addr,size,data):
     state['warnings'].append(cstring(uc.reg_read(UC_ARM_REG_R0)))
@@ -90,7 +94,7 @@ call(arm7apply,[0x07800100,platform,0,0x07800120,0x07800124,0])
 irq1=struct.pack('<4I',0xe92d4000,0xe24dd004,0xe59f003c,0xe5902060);irq0=struct.pack('<4I',0xe92d4008,0xe59f2038,0xe59f0038,0xe5921000)
 irqoff=bytes(rom.arm7).find(irq1);irqoff=irqoff+0x40 if irqoff>=0 else bytes(rom.arm7).find(irq0)+0x3c
 instruction,hook=struct.unpack('<II',u.mem_read(rom.arm7RamAddress+irqoff,8))
-folder=root/('build/rts-worker-p49' if LIVE else 'build/rts-worker-p43' if TRACE else 'build/rts-worker-p4' if P4 else 'build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
+folder=root/('build/rts-worker-p6' if MENU else 'build/rts-worker-p49' if LIVE else 'build/rts-worker-p43' if TRACE else 'build/rts-worker-p4' if P4 else 'build/rts-worker-m32' if M32 else 'build/rts-worker-m3' if M3 else 'build/rts-worker')
 meta=json.loads((folder/'RtsM2Image.json').read_text())
 worker_literal=struct.unpack('<I',u.mem_read(symbols['_ZL16sM2EntryAtTarget'],4))[0]
 worker=struct.unpack('<I',u.mem_read(worker_literal,4))[0]
@@ -102,7 +106,7 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert 0x02300000<=worker and worker+meta['memory_bytes']<=0x023ff000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and ('RTS P5.0' if LIVE else 'PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
+assert state['warnings'] and ('RTS P6' if MENU else 'RTS P5.0' if LIVE else 'PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
@@ -160,6 +164,12 @@ if P4:
         report['load_crc_enabled']=loadcrc
     report['persistent_identity']='loaded code SHA + build fingerprint; game ID is not an eligibility filter'
     report['secure_tail']=hex(tail)
+if MENU:
+    bootOffset=int(next(line.split('=')[1].strip().rstrip(';') for line in (folder/'RtsM2Image.h').read_text().splitlines() if 'RTS_MENU_BOOT_OFFSET =' in line),16)
+    assert bytes(u.mem_read(worker+bootOffset,296))==menu[:8]+menu[8+4*288:]
+    hotkey=hook+symbols['rts7_hotkey']-symbols['__start_patch_rts7']
+    assert struct.unpack('<I',u.mem_read(hotkey,4))[0]==0x301
+    report['menu_boot_transfer']='PASS';report['menu_hotkey']='L+R+A'
 report['clock']=hex(clock)
 report['workspace_bytes']=meta['memory_bytes']
 if P4:report.update({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256((folder/'worker.bin').read_bytes()).hexdigest()})

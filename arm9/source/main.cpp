@@ -24,6 +24,10 @@
 #ifdef PICO_RTS_SNAPSHOT
 #include "RtsSnapshotInfo.h"
 RtsSnapshotInfo gRtsSnapshotInfo;
+#ifdef PICO_RTS_MENU
+#include "RtsMenuRuntime.h"
+RtsMenuBoot gRtsMenuLoaderBoot;
+#endif
 #ifdef PICO_RTS_RESTORE_PROBE
 #include "RtsP4.h"
 RtsP4Identity gRtsP4LoaderIdentity;
@@ -171,6 +175,9 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
 {
 #ifdef PICO_RTS_SNAPSHOT
     for (u32 i=0;i<sizeof(gRtsSnapshotInfo)/4;++i) ((u32*)&gRtsSnapshotInfo)[i]=receiveFromArm7();
+#ifdef PICO_RTS_MENU
+    for(u32 i=0;i<sizeof(gRtsMenuLoaderBoot)/4;++i)((u32*)&gRtsMenuLoaderBoot)[i]=receiveFromArm7();
+#endif
 #endif
 #ifdef PICO_RTS_RESTORE_PROBE
     for(u32 i=0;i<8;++i)((u32*)gRtsP4LoaderIdentity.code)[i]=receiveFromArm7();

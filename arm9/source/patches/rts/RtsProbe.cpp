@@ -18,6 +18,10 @@
 #include "patches/platform/dspico/DSPicoWriteSdSectorsPatchCode.h"
 #include "RtsM2Image.h"
 extern RtsSnapshotInfo gRtsSnapshotInfo;
+#ifdef PICO_RTS_MENU
+#include "RtsMenuRuntime.h"
+extern RtsMenuBoot gRtsMenuLoaderBoot;
+#endif
 extern "C" u32 rts9_m2_entry;
 extern "C" u32 rts7_diagnostic_address, rts7_read_busy_address, rts7_write_busy_address, rts7_clock_address;
 #ifdef PICO_RTS_ARM7_CAPTURE
@@ -226,6 +230,10 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     ((u32*)(config+sizeof(gRtsSnapshotInfo)))[0]=(u32)workspace;
     ((u32*)(config+sizeof(gRtsSnapshotInfo)))[1]=workspaceBytes;
     *sM2EntryAtTarget=(u32)workspace+RTS_M2_ENTRY_OFFSET;
+#ifdef PICO_RTS_MENU
+    auto menuBoot=(RtsMenuCoreBoot*)((u8*)workspace+RTS_MENU_BOOT_OFFSET);
+    menuBoot->magic=gRtsMenuLoaderBoot.magic;menuBoot->debug=gRtsMenuLoaderBoot.debug;menuBoot->aux=gRtsMenuLoaderBoot.aux;
+#endif
 #ifdef PICO_RTS_RESTORE_PROBE
     auto ptr=(const u32*)((u8*)workspace+RTS_P4_POINTERS_OFFSET);
     memcpy(sP4Tail,(void*)ptr[8],RTS_P4_TAIL_BYTES);
@@ -344,6 +352,9 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     epilogue[0] = 0xe51ff004;
     *sEnabledAtTarget = 1;
 #ifdef PICO_RTS_GENERIC_SOUND
+    #ifdef PICO_RTS_MENU
+    if(gRtsMenuLoaderBoot.debug)
+    #endif
     if(!soundReady)rtsProbeMessage("RTS: sound restore unavailable.\nSave/load remains enabled.\nLoad may resume silently.\nNew music may restart sound.");
 #endif
 #ifdef PICO_RTS_SNAPSHOT
@@ -354,7 +365,11 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     rtsProbeMessage("RTS research: PSG capture P4.8\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2/S9 line.");
 #else
 #ifdef PICO_RTS_LIVE_RESTORE
+#ifdef PICO_RTS_MENU
+    if(gRtsMenuLoaderBoot.debug)rtsProbeMessage("RTS P6: four-slot S/L Menu\nHold L+R+A to open.\nD-pad: slot, A: actions\nB: back / return to game\nResave after version change.");
+#else
     rtsProbeMessage("RTS P5.0: automatic SDK hooks\nSave: L+R+Down+A\nLoad: L+R+Down+B\nLoad CRC optional, default off.\nResave after version change.");
+#endif
 #else
     rtsProbeMessage("RTS research: restore P4.2\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nAudio restarts. 3D incomplete.");
 #endif
