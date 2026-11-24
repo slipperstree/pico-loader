@@ -7,9 +7,10 @@ typedef uint32_t u32;typedef uint16_t u16;typedef uint8_t u8;
 #define R16(a) (*(volatile u16*)(a))
 #define R8(a) (*(volatile u8*)(a))
 extern volatile RtsArm7Mailbox gRtsArm7Mailbox;
-static struct {u32 replayed,drained9;} own __attribute__((aligned(32)));
+static struct {u32 replayed,drained9,started7;} own __attribute__((aligned(32)));
 #define replayed own.replayed
 #define drained9 own.drained9
+#define started7 own.started7
 static const u32 vramControl[9]={0x04000240,0x04000241,0x04000242,0x04000243,0x04000244,0x04000245,0x04000246,0x04000248,0x04000249};
 static const u32 vramEnd[9]={0x20000,0x40000,0x60000,0x80000,0x90000,0x94000,0x98000,0xa0000,0xa4000};
 static void checkedRead(u32 sector,u32* out){if(!RtsP4ReadSector(sector,out))RtsP4Fault(1);}
@@ -19,14 +20,18 @@ static void zero(void* p,u32 n){u32* d=p;for(u32 i=0;i<n/4;++i)d[i]=0;}
 void rtsP4Arm9Begin(void)
 {
     rtsP4InvalidateLine((u32)&gRtsP4);
-    replayed=0;drained9=0;
+    replayed=0;drained9=0;started7=0;
 }
-u32 rtsP4Await7(void)
+u32 rtsP4Start7(void)
 {
+    gRtsP4.ready=0;
+    rtsP4Drain();
+    R16(0x04000180)=(R16(0x04000180)&~0xf00u)|0x800;
+
     for(u32 spins=0x100000;spins;--spins)
     {
         rtsP4InvalidateLine((u32)&gRtsP4);
-        if(gRtsP4.ready)return 1;
+        if(gRtsP4.ready){started7=1;RtsP4Heartbeat(0);return 1;}
     }
     return 0;
 }
@@ -64,7 +69,7 @@ static void send7(void)
 }
 void rtsP4ReplayCurrent(void)
 {
-    if(replayed)return;
+    if(replayed || !started7)return;
     u32 control=rtsP4GetControl();
     if(control&4)
     {

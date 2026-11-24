@@ -55,7 +55,7 @@ rts7_keys:
     tst r1,r2
     bne rts7_rearm
     mov r3,#1
-80: ldr r0,rts7_operation_address
+80: adr r0,rts7_operation
     str r3,[r0]
 #else
     tst r1, r2
@@ -158,7 +158,7 @@ rts7_m2_guard_done:
     mov r3, #0
     str r3, [r0]
     bic r10, r1, #0xf00
-#ifdef PICO_RTS_ARM7_CAPTURE
+#if defined(PICO_RTS_ARM7_CAPTURE) && !defined(PICO_RTS_RESTORE_PROBE)
     mov r1,sp
     mov r2,r8
     mov r3,r9
@@ -171,11 +171,6 @@ rts7_m2_guard_done:
     movne r2,#8192
     ldrne r0,rts7_diagnostic_address
     strne r2,[r0]
-#endif
-#ifdef PICO_RTS_RESTORE_PROBE
-    ldr r0,rts7_operation_address
-    mov r3,#0
-    str r3,[r0,#4] // ARM7 pause-ready=0 BEFORE publishing C.
 #endif
     ldr r0, rts7_ipc
     orr r3, r10, #0xc00
@@ -190,7 +185,29 @@ rts7_m2_guard_done:
     ldr r7, rts7_frames
 #endif
 #ifdef PICO_RTS_RESTORE_PROBE
-    mov r0,r10 // Original IPC control for Begin, on the independent stack.
+    // Publish C before touching any new P4 state/capture code. ARM9 will
+    // explicitly send 8 only AFTER its display feedback and cache transition.
+    ldr r5,rts7_spin_budget
+    ldr r0,rts7_ipc
+82: ldrh r1,[r0]
+    and r1,r1,#15
+    cmp r1,#8
+    beq 83f
+    cmp r1,#13
+    beq rts7_release
+    cmp r1,#14
+    beq rts7_m2_fault
+    cmp r1,r6
+    ldrne r5,rts7_spin_budget
+    mov r6,r1
+    subs r5,r5,#1
+    bne 82b
+    b rts7_m2_fault
+83: mov r0,r10
+    mov r1,sp
+    mov r2,r8
+    mov r3,r9
+    ldr r4,rts7_operation
     ldr r12,rts7_loop_address
     mov lr,pc
     bx r12
@@ -286,6 +303,9 @@ rts7_nibble_mask: .word 0xf0f
 rts7_hold_count: .word 0
 rts7_fired: .word 0
 rts7_pending: .word 0
+#ifdef PICO_RTS_RESTORE_PROBE
+rts7_operation: .word 0
+#endif
 rts7_frames: .word 180
 rts7_spin_budget: .word 0x04000000
 #ifdef PICO_RTS_SNAPSHOT

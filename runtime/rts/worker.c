@@ -396,8 +396,7 @@ void rtsM2Run(const u32* entryRegs)
     // CPU9 can show a safe stage before ARM7's new C preflight. This makes a
     // failed ARM7 entry distinguishable from SD I/O, and gives it a deadline.
     if(!reason){progressOpen();progress(0,0);}
-    if(!rtsP4Await7())fault(81);
-    reason|=gRtsP4.error;
+
 #endif
     u32 first;
     if(!mapSector(0,&first))reason|=256;
@@ -447,7 +446,9 @@ void rtsM2Run(const u32* entryRegs)
     u32 transientCi=oldCi|2u,transientControl=(control&~4u)|0x1000u;
     setCache(transientCi,0,transientControl);
 #ifdef PICO_RTS_ARM7_CAPTURE
+#ifndef PICO_RTS_RESTORE_PROBE
     if(gRtsArm7Mailbox.context.magic!=RTS_ARM7_CONTEXT_MAGIC || gRtsArm7Mailbox.status){ioState.error=25;fault(8);}
+#endif
     h->reserved[8]=0x31433741; // ARM7 context marker and fixed diagnostic layout.
     h->reserved[9]=0x40c000;h->reserved[10]=512;h->reserved[11]=0x18000;
 #endif
@@ -459,7 +460,12 @@ void rtsM2Run(const u32* entryRegs)
     u16 aux=REG16(0x040001a0);
     u32 oldCommand0=REG32(CMD),oldCommand1=REG32(CMD+4),oldCardControl=REG32(CARDCTRL);
 #ifdef PICO_RTS_RESTORE_PROBE
-    u32 p4Reason=rtsP4FreezePayload();
+    // S2 is already visible. D-cache and write buffering are OFF before
+    // telling ARM7 to start its new main-RAM capture/prepare path.
+    if(!rtsP4Start7())fault(81);
+    u32 p4Reason=gRtsP4.error|s->info.reserved;
+    if(!p4Reason && (gRtsArm7Mailbox.context.magic!=RTS_ARM7_CONTEXT_MAGIC || gRtsArm7Mailbox.status))p4Reason=8192;
+    if(!p4Reason)p4Reason=rtsP4FreezePayload();
     if(p4Reason){progress(8,p4Reason);waitRefusalAck();goto cleanup;}
     if(gRtsP4.operation)
     {

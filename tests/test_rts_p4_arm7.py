@@ -16,19 +16,28 @@ def model7():
  names={'rts7_diagnostic_address':syms['gRtsM2']+28,'rts7_read_busy_address':0x0380bda4,'rts7_write_busy_address':0x0380bdf0,'rts7_clock_address':syms['gRtsM2Frames'],'rts7_mailbox_address':syms['gRtsArm7Mailbox'],'rts7_capture_address':syms['rtsArm7CaptureContext'],'rts7_service_address':syms['rtsArm7CaptureService'],'rts7_operation_address':syms['gRtsP4']+4,'rts7_begin_address':syms['rtsP4Arm7Begin']|1,'rts7_loop_address':syms['rtsP4Arm7Entry']}
  for name,val in names.items():put(u,hook+loader[name]-loader['__start_patch_rts7'],val)
  return u
-for mask in (0x381,0x382):
- u=model7();done=0x03809000;state={'own':0,'peer':0,'line':192,'park':False,'ticks':0,'entered':False};sp=0x0380f000
+for mask,cancel in ((0x381,False),(0x382,False),(0x381,True)):
+ u=model7();done=0x03809000;
+ if cancel:put(u,hook+loader['rts7_spin_budget']-loader['__start_patch_rts7'],32)
+ state={'own':0,'peer':0,'line':192,'park':False,'ticks':0,'entered':False};sp=0x0380f000
  def read(cpu,ac,a,n,v,d):
   if a==0x04000130:half(cpu,a,0x3ff^mask)
-  elif a==0x04000180:half(cpu,a,(state['own']<<8)|state['peer'])
+  elif a==0x04000180:
+   if cancel and state['park']:
+    state['ticks']+=1;state['peer']=13 if state['ticks']>240 else 9+(state['ticks']//4)%2
+   half(cpu,a,(state['own']<<8)|state['peer'])
   elif a==0x04000006:
    state['line']=(state['line']+17)%263;half(cpu,a,state['line']);state['ticks']+=1
    if state['park'] and state['ticks']>80:state['peer']=13
  def write(cpu,ac,a,n,v,d):
+  if base<=a<limit and not state['park']:
+   assert a==syms['gRtsM2']+28,'New main-RAM work occurred before ARM9 ACK/C'
   if a==0x04000180:
    state['own']=(v>>8)&15
    if state['own']==11:state['peer']=10
-   if state['own']==12:state['park']=True
+   if state['own']==12:
+    assert get(cpu,syms['gRtsArm7Mailbox']+544)==0,'Capture ran before C/visible ARM9 phase'
+    state['park']=True;state['peer']=10 if cancel else 8
  def enter(cpu,a,n,d):state['entered']=True;assert syms['gRtsP4Arm7Stack']<=cpu.reg_read(UC_ARM_REG_SP)<=syms['gRtsP4Arm7Stack']+meta['arm7_stack_bytes']
  u.hook_add(UC_HOOK_MEM_READ,read,begin=0x04000000,end=0x04100003);u.hook_add(UC_HOOK_MEM_WRITE,write)
  u.hook_add(UC_HOOK_CODE,enter,begin=syms['rtsP4Arm7Loop'],end=syms['rtsP4Arm7Loop'])
@@ -37,9 +46,11 @@ for mask in (0x381,0x382):
   for j,reg in enumerate(REGS[2:]):u.reg_write(reg,0x12340000+j)
   u.emu_start(hook,done,count=1000000);assert u.reg_read(UC_ARM_REG_PC)==done and u.reg_read(UC_ARM_REG_SP)==sp+8
   assert [u.reg_read(x) for x in REGS[2:]]==[0x12340000+j for j in range(11)]
- assert state['entered'] and state['park'];assert get(u,syms['gRtsP4']+4)==(mask==0x382)
+ assert state['park'] and state['entered']==(not cancel)
+ if not cancel:assert get(u,syms['gRtsP4']+4)==(mask==0x382)
+ else:assert get(u,syms['gRtsArm7Mailbox']+544)==0
  assert u.reg_read(UC_ARM_REG_CPSR)==0x60000092
- print('PASS actual ARM7 VBlank hotkey',hex(mask),'-> own main-RAM stack, clock, normal release, exact private epilogue ABI')
+ print('PASS actual ARM7 VBlank hotkey',hex(mask),'cancel before start' if cancel else 'start accepted','-> own main-RAM stack, clock, normal release, exact private epilogue ABI')
 # Destructive RPC path: consume actual commands 2/3/4/5 and return directly into
 # the saved IRQ. This must never unwind through a private WRAM stack.
 u=model7();mail=syms['gRtsArm7Mailbox'];ctrl=syms['gRtsP4'];scratch=syms['gRtsP4Scratch'];ctx=capture[512+0x40c000:512+0x40c200];c=words(ctx)
@@ -66,13 +77,20 @@ def write(cpu,ac,a,n,v,d):
  elif a==ctrl+8 and v==1:state['ready']=True
  if 0x03000000<=a<0x03008000:cpu.mem_write(0x037f8000+(a&32767),v.to_bytes(n,'little'))
 u.hook_add(UC_HOOK_MEM_READ,read,begin=0x04000000,end=0x04100003);u.hook_add(UC_HOOK_MEM_READ,read,begin=mail,end=mail+19);u.hook_add(UC_HOOK_MEM_READ,read,begin=ctrl+12,end=ctrl+15);u.hook_add(UC_HOOK_MEM_WRITE,write)
+for i,mode in enumerate((31,18,19,23,27,17)):
+ u.reg_write(UC_ARM_REG_CPSR,0xc0|mode);u.reg_write(UC_ARM_REG_SP,c[20+i*3]);u.reg_write(UC_ARM_REG_LR,c[21+i*3])
+ if mode!=31:u.reg_write(UC_ARM_REG_SPSR,c[22+i*3])
+ if mode==17:
+  for reg,value in zip(REGS[8:],c[38:43]):u.reg_write(reg,value)
 u.reg_write(UC_ARM_REG_CPSR,0xd2);u.reg_write(UC_ARM_REG_SP,0x0380f000);u.reg_write(UC_ARM_REG_LR,0x03809000)
+for reg,value in zip(REGS,[0x4000,c[2],c[3],1,0]):u.reg_write(reg,value)
 def assertArm(cpu,a,n,d):
  assert not cpu.reg_read(UC_ARM_REG_CPSR)&32,'ARM7 capture service entered in Thumb mode'
 u.hook_add(UC_HOOK_CODE,assertArm,begin=syms['rtsArm7CaptureService'],end=syms['rtsArm7CaptureService'])
 u.emu_start(syms['rtsP4Arm7Entry'],c[19]&~1,count=200000)
 assert u.reg_read(UC_ARM_REG_PC)==c[19]&~1 and state['ready'] and state['next']==4 and state['sent']==[0x11223344]
 assert bytes(u.mem_read(0x03800000,512))==struct.pack('<128I',*([0xdeadbeef]*128))
+assert get(u,mail+544+92)==c[2],'Scratch IRQ stack leaked into saved game context'
 assert u.reg_read(UC_ARM_REG_SP)==c[2]+48 and u.reg_read(UC_ARM_REG_CPSR)==c[3]
 print('PASS actual ARM7 RPC 1/2/3/4/5: private sector write, FIFO/audio preparation, coherent release -> saved IRQ without private-stack return')
 

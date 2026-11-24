@@ -10,6 +10,35 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.2: defer capture until visible ARM9 feedback
+
+P4.1 also froze on hardware with no dimming and no progress. Its returned
+slot is the identical phase-0, sequence-0, all-zero payload file. Loader hashes
+match the deployed P4.1. The new S0/ready timeout did not get a chance to run.
+The exact hardware cause remains unconfirmed.
+
+P4.2 keeps the new operation selection in private WRAM and removes P4 context
+capture/shared-ready writes before publishing C. After C, ARM7 waits in private
+assembly for a separate IPCSYNC start nibble 8. ARM9 first dims, reaches S0/S2,
+captures its original control state, flushes caches and turns off D-cache/write
+buffering. Only then does it clear ready and publish 8. ARM7 switches stacks,
+captures the original private game frame and samples sound/FIFO state; ARM9
+waits for readiness with the existing bounded S9 0081 failure path. Both normal
+and early-cancel paths retain the original private epilogue ABI. Early refusal
+does not replay queues that ARM7 has not drained.
+
+The capture primitive now explicitly records its supplied parked SP in the
+active bank; calling it from a scratch stack must not publish that scratch SP
+as the saved IRQ continuation. The argument frame preserves original IPC,
+private SP, CPSR, IME and operation. The ARM7 loop accepts nibble 8 during the
+brief prepared-to-running transition.
+
+Tests assert that before C there are no new main-RAM writes (only the legacy
+guard word), no capture, and no new shared operation publication. They execute
+the explicit start transition and compare original IRQ SP/frame after deferred
+capture. ARM9's model asserts S2 and D-cache off before starting ARM7, and checks
+the timeout without card writes. Hardware must still verify this boundary.
+
 ## P4.1: first hardware pause failure
 
 On 414 hardware, P4.0 froze after the save hotkey without a visible progress

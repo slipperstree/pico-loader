@@ -86,6 +86,9 @@ copy_frame:
     movne r3,#96
     ldr r2,[r0,#76]
     str r2,[r0,r3]
+    sub r3,r3,#4
+    ldr r2,[r0,#8]
+    str r2,[r0,r3]             // Original parked SP, even on a scratch stack.
     ldr lr,[r0,#24]
     mov r3,#0
     str r3,[r0,#24]

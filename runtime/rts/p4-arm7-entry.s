@@ -9,6 +9,15 @@ rtsP4Arm7Entry:
     mov r4,sp
     ldr sp,=gRtsP4Arm7Stack+384
     stmdb sp!,{r4,lr}
+    // r4 points at the original private saved arguments. Capture on the
+    // independent IRQ stack; the record keeps the original game-frame SP.
+    ldr r1,[r4,#4]
+    ldr r2,[r4,#8]
+    ldr r3,[r4,#12]
+    ldr r0,=gRtsArm7Mailbox
+    bl rtsArm7CaptureContext
+    ldr r0,[r4]
+    ldr r1,[r4,#16]
     ldr r3,=rtsP4Arm7Loop
     mov lr,pc
     bx r3

@@ -10,7 +10,7 @@ RtsP4Shared gRtsP4 __attribute__((aligned(32)));
 RtsP4Scratch gRtsP4Scratch __attribute__((aligned(32)));
 RtsP4Identity gRtsP4Identity __attribute__((aligned(32)));
 u32 gRtsP4TailAddress;
-u32 gRtsP4SavedSequence __attribute__((aligned(32)));
+u32 gRtsP4SavedSequence;
 u32 gRtsP4FreshSlot;
 u32 gRtsP4Arm7Stack[96] __attribute__((aligned(8)));
 static u32 send(const RtsP4Queue* q)
@@ -54,9 +54,11 @@ static void restoreDevice7(void)
     R32(0x04000214)=~p[18];R32(0x04000210)=p[17];
 }
 __attribute__((noreturn)) static void stop(void){for(;;)__asm__ volatile("nop");}
-void rtsP4Arm7Loop(u32 originalIpc)
+void rtsP4Arm7Loop(u32 originalIpc,u32 operation)
 {
+    if(gRtsArm7Mailbox.status)gRtsM2.info.reserved|=8192;
     rtsP4Arm7Begin(originalIpc);
+    gRtsP4.operation=operation;
     gRtsP4.ready=1; // Publish sampled audio/FIFO state before ARM9 uses it.
     volatile RtsArm7Mailbox* m=&gRtsArm7Mailbox;
     u32 previous=R16(0x04000006),lastPeer=10,budget=0x04000000,destructive=0;
@@ -67,7 +69,7 @@ void rtsP4Arm7Loop(u32 originalIpc)
         u32 peer=R16(0x04000180)&15;
         if(peer==14)stop();
         if(peer==13){if(destructive)stop();return;}
-        if(peer!=9 && peer!=10)stop();
+        if(peer!=8 && peer!=9 && peer!=10)stop();
         if(peer!=lastPeer){lastPeer=peer;budget=0x04000000;}
         if(!budget--)stop();
         u32 request=m->request,command=m->command;
