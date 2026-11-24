@@ -12,7 +12,10 @@ Their commit histories are preserved separately rather than combined through
 an unrelated-history merge.
 
 - Loader feature branch: [slipperstree/pico-loader, feature/dspico-savestates](https://github.com/slipperstree/pico-loader/tree/feature/dspico-savestates).
-- Matching launcher branch: [slipperstree/pico-launcher, feature/dspico-savestates](https://github.com/slipperstree/pico-launcher/tree/feature/dspico-savestates).
+- Chinese display-fix branch: [slipperstree/pico-launcher, fix/utf8-icon-labels-and-filename-fonts](https://github.com/slipperstree/pico-launcher/tree/fix/utf8-icon-labels-and-filename-fonts).
+- Launcher and loader development remain independent. A temporary launcher
+  save-state branch contained documentation only and has been removed; no
+  launcher save-state branch is needed.
 - Launcher feature-branch base: the existing UTF-8 display-fix commit
   [`0665b36`](https://github.com/slipperstree/pico-launcher/commit/0665b36498f74b4109a1780fc33359bea34c6602).
 - The locally tested launcher with the selectively integrated Chinese font
