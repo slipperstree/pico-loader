@@ -98,7 +98,7 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and ('Sound check P4.7' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
+assert state['warnings'] and ('PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
@@ -117,7 +117,7 @@ if M3:
         assert literal==worker+offset
         report[label]=hex(literal)
 if P4:
-    ptr=struct.unpack('<13I',u.mem_read(worker+meta['p4_pointers_offset'],52))
+    ptr=struct.unpack('<14I',u.mem_read(worker+meta['p4_pointers_offset'],56))
     tail=struct.unpack('<I',u.mem_read(ptr[9],4))[0]
     assert 0x02000000<=tail and tail+meta['p4_tail_bytes']<=0x02000800
     assert bytes(u.mem_read(tail,meta['p4_tail_bytes']))==bytes(u.mem_read(ptr[8],meta['p4_tail_bytes']))
@@ -126,9 +126,23 @@ if P4:
     for literal,index in [('rts7_begin_address',1),('rts7_loop_address',0)]:
         assert struct.unpack('<I',u.mem_read(hook+symbols[literal]-symbols['__start_patch_rts7'],4))[0]==ptr[index]
     pcmPat=struct.pack('<II',0xe92d41f0,0xe1a08001);tmPat=struct.pack('<II',0xe2611801,0xe1a00200)
+    psgPat=struct.pack('<5I',0xe92d40f0,0xe24dd004,0xe1a07001,0xe1a06003,0xe59d501c)
+    noisePat=struct.pack('<5I',0xe92d40f0,0xe24dd004,0xe1a07002,0xe1a06003,0xe59d5018)
     for pattern in (pcmPat,tmPat):
         offset=bytes(rom.arm7).index(pattern);a=rom.arm7RamAddress+offset
         ins,stub=struct.unpack('<II',u.mem_read(a,8));assert ins==0xe51ff004 and 0x0380bc90<=stub<0x0380c490
+    targets=[]
+    for pattern,offset,runtime in ((psgPat,0x94,0x037ff274),(noisePat,0x8c,0x037ff1bc)):
+        raw=bytes(rom.arm7).index(pattern);a=rom.arm7RamAddress+raw
+        assert bytes(u.mem_read(a,8))==pattern[:8],'Original PSG/noise prologue was altered'
+        ins=struct.unpack('<I',u.mem_read(a+offset,4))[0];assert ins>>24==0xeb
+        disp=(ins&0xffffff)<<2
+        if disp&0x2000000:disp-=0x4000000
+        target=runtime+8+disp;assert 0x0380bc90<=target<0x0380c490;targets.append(target)
+    assert targets[0]==targets[1]
+    literal=targets[0]+symbols['rtsSoundReloadObserve']-symbols['__start_patch_rtsSoundReload']
+    assert struct.unpack('<I',u.mem_read(literal,4))[0]==ptr[13]
+    report['psg_noise_shared_timer_hook']=hex(targets[0])
     report['persistent_identity']='loaded code SHA + build fingerprint (full ROM host-verified)'
     report['secure_tail']=hex(tail)
 report['clock']=hex(clock)

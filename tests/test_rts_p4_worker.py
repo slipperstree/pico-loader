@@ -22,7 +22,7 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False):
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -70,6 +70,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   put(cpu,0x04000208,0);put(cpu,0x04000210,0x1040001);put(cpu,0x04000214,1)
   for i in range(4):half(cpu,0x04000102+i*4,0)
  half(a7,0x04000500,0x807f);half(a7,0x04000504,512);put(a7,0x04000400,0x8800407f)
+ if psg_first:put(a7,0x040004b0,0xe3400301)
  def a7read(cpu,ac,a,n,val,d):
   if a==0x04000184:half(cpu,a,0x8000|(0x4000 if refusal=='fifo7_error' else 0)|(0x100 if not fifo7 else 0)|(2 if len(fifo9)==16 else 0))
   elif a==0x04100000:put(cpu,a,fifo7.pop(0))
@@ -167,7 +168,11 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
     state['server7']=True
     assert not cp[(1,0,0)]&4 and (2,0) in state['stages'],'ARM7 started before visible feedback/cache off'
     if not arm7_unready:
-     sync7();call7('rtsP4Arm7Begin',[0x4000],True)
+     sync7()
+     if psg_first:
+      put(a7,a7stack,0x040004b0,0x10000-777)
+      call7('rtsSoundObserveReload',[a7stack],True)
+     call7('rtsP4Arm7Begin',[0x4000],True)
      cpu.mem_write(ctrl,bytes(a7.mem_read(ctrl,224)));put(cpu,ctrl+4,int(load));put(cpu,ctrl+8,1)
      cpu.mem_write(shadow,bytes(a7.mem_read(shadow,512)))
    elif state['own']==13:
@@ -283,6 +288,10 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert h[6]==zlib.crc32(blob[512:]);crc=bytearray(blob[:512]);struct.pack_into('<I',crc,480,0);assert h[120]==zlib.crc32(crc)
   assert blob[512+0x424400:512+0x4c9400]==targetvideo
   assert state['writes']==sectors+1
+  if psg_first:
+   audio=words(blob[512+0x4c9400:512+0x4c9600])
+   assert audio[84+11]==0x300 and audio[4+11*5+2]==0x10000-777 and audio[100+11]&0x80000000
+   print('PASS first-save active PSG11 captured with observed timer and 0300 coverage in completed slot',flush=True)
   if '--bus-check' in sys.argv:
    assert struct.unpack('<H',u.mem_read(0x04000204,2))[0]==h0[39]
    assert state['exmem_writes'] and all(not (value&0x8000 and running) for value,running in state['exmem_writes'])
@@ -294,7 +303,7 @@ privateModel=r.parent/'实机记录'/'P4-local-model.bin'
 if '--reuse' in sys.argv:
  b=privateModel.read_bytes();disk={a:b[i*512:(i+1)*512] for i,a in enumerate(physical)}
 else:
- print('Executing actual P4 save...',flush=True);a=make(disk);print('PASS full capture, physical extent writes, payload/header CRC, audio shadow and FIFO replay',flush=True)
+ print('Executing actual P4 save...',flush=True);a=make(disk,psg_first=TRACE);print('PASS full capture, physical extent writes, payload/header CRC, audio shadow and FIFO replay',flush=True)
  privateModel.write_bytes(b''.join(disk[a] for a in physical))
 if TRACE:
  make(disk,True,True)
@@ -305,7 +314,7 @@ if TRACE:
   make({physical[0]:bytes(blank)},refusal=case)
  make(disk,True,True,source_alias=True)
  print('PASS actual worker preflight accepts mirrored main RAM sound source without canonicalizing playback address',flush=True)
- (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','private_ack_timeout':'PASS','detailed_refusals':'PASS','sound_source_alias':'PASS','bus_priority_policy':'PASS' if '--bus-check' in sys.argv else 'not run','physical_hardware':False},indent=2))
+ (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','private_ack_timeout':'PASS','detailed_refusals':'PASS','sound_source_alias':'PASS','cold_psg11_save':'PASS','bus_priority_policy':'PASS' if '--bus-check' in sys.argv else 'not run','physical_hardware':False},indent=2))
  print('PASS trace save, load disabled with no card writes, ready timeout',flush=True);raise SystemExit(0)
 print('Executing independent boot / mutated-state P4 restore...',flush=True);b=make(disk,True,True);print('PASS independent runtime instance: validated file -> main/TCM/WRAM/video/audio + ARM9/ARM7 continuation',flush=True)
 if '--restore-only' in sys.argv:

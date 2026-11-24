@@ -10,6 +10,51 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.8: observe direct PSG/noise timer initialization
+
+Hardware P4.7 first shows S8 4411 B after each launch; B returns normally,
+and later saves finish all 9803 sectors and return. Load shows L8 1007 B as
+intended by the save-only build. The returned complete slot is phase 2,
+sequence 4, with valid header/payload CRCs and the expected build/code IDs.
+
+In that successful capture, channel 11 is inactive, format 3, with zero timer
+coverage and zero shadow parameters. Other PCM channels have fff0 coverage.
+Thus subsequent success did not repair channel 11 coverage: it ceased to
+require a restart record once inactive.
+
+Read-only GNU ARM disassembly of the privately supplied SDK shows the missing
+paths: PSG setup at 037ff1e0 writes TMR directly from original stack[0], and
+noise setup at 037ff130 writes TMR directly from original r3. Neither goes
+through the previously observed timer setter. These observations explain the
+missing coverage; static evidence alone does not establish exactly when that
+channel stopped in the user's first refusal.
+
+A shared original stub observes the two direct TMR stores, retaining both
+SDK prologues and returns. Each replaced halfword store becomes a BL to that
+stub: it saves registers/flags, masks IRQ/FIQ across shadow publication and
+the displaced hardware store, then returns to the setter. This fits the
+existing private patch heap, whereas two complete entry wrappers do not.
+The SDK disables the channel through CNT before TMR setup, so a pre-store
+interruption cannot see an already active half-programmed new channel.
+PCM/timer entry observers still bracket their full calls with busy counters.
+The installer validates entry patterns, timer-store and return instructions
+under the exact A2GJ gate before activating any hotkey hook.
+No game/SDK bytes or captured RAM are distributed.
+
+Actual SDK tests reproduce cold active PSG11 refusal 4411 with the old two
+observation points and successful preflight once it is inactive. The new
+PSG hook makes its first active preflight valid (coverage 0300), without
+PCM history or a prior timer modification. PSG channels 8..13 and noise 14..15
+are compared with uninstrumented execution for identical MMIO writes, registers,
+flags and stack, while checking that shadow publication and the timer store
+are IRQ/FIQ atomic. Both produce valid restart programming.
+
+REA raw ARM opening established artifact identity, but its Windows providers
+could not analyze raw ARM. The stated function/ABI findings are ordinary GNU
+objdump and local controlled instruction-model observations, not REA decompiler
+Evidence. The private ledger records SHA and provider limitations.
+The build stays save-only; first-attempt saving still requires hardware testing.
+
 ## P4.7: distinguish refusal sources and accept ARM7 main RAM sound aliases
 
 P4.6 hardware showed S8 4096 B. The user powered off before trying B. The

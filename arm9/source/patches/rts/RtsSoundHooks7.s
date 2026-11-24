@@ -1,4 +1,4 @@
-// Original ARM7 SDK observation stubs. Optional and not installed yet.
+// Original ARM7 SDK observation stubs, installed only in the gated RTS profile.
 #ifdef PICO_RTS_AUDIO_SHADOW
 .cpu arm7tdmi
 .syntax unified
@@ -56,6 +56,28 @@ rtsSoundTimerHook:
 rtsSoundTimerBusy: .word 0
 rtsSoundTimerObserve: .word 0
 rtsSoundTimerResume: .word 0
+.section patch_rtsSoundReload,"ax"
+.global rtsSoundReloadHook,rtsSoundReloadObserve
+// Both callers replace STRH r1,[r0,#8] with BL. Their original prologues have
+// already saved caller LR; the BL link is only our return to the setter body.
+rtsSoundReloadHook:
+    stmdb sp!,{r0-r3,r12,lr}
+    mrs r3,cpsr
+    stmdb sp!,{r3,r12}
+    orr r12,r3,#192
+    msr cpsr_c,r12
+    add r0,sp,#8
+    ldr r12,rtsSoundReloadObserve
+    mov lr,pc
+    bx r12
+    ldr r0,[sp,#8]
+    ldr r1,[sp,#12]
+    strh r1,[r0,#8]
+    ldmia sp!,{r3,r12}
+    msr cpsr_cxsf,r3
+    ldmia sp!,{r0-r3,r12,lr}
+    bx lr
+rtsSoundReloadObserve: .word 0
 .section patch_rtsSoundExit,"ax"
 .global rtsSoundExitHook,rtsSoundExitBusy
 rtsSoundExitHook:

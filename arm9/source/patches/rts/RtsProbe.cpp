@@ -32,10 +32,12 @@ extern "C" u32 rts7_operation_address,rts7_begin_address,rts7_loop_address;
 DEFINE_SECTION_SYMBOLS(patch_rtsSoundPcm);
 DEFINE_SECTION_SYMBOLS(patch_rtsSoundTimer);
 DEFINE_SECTION_SYMBOLS(patch_rtsSoundExit);
+DEFINE_SECTION_SYMBOLS(patch_rtsSoundReload);
 extern "C" {
-void rtsSoundPcmHook(),rtsSoundTimerHook(),rtsSoundExitHook();
+void rtsSoundPcmHook(),rtsSoundTimerHook(),rtsSoundExitHook(),rtsSoundReloadHook();
 extern u32 rtsSoundPcmBusy,rtsSoundPcmObserve,rtsSoundPcmResume;
 extern u32 rtsSoundTimerBusy,rtsSoundTimerObserve,rtsSoundTimerResume,rtsSoundExitBusy;
+extern u32 rtsSoundReloadObserve;
 }
 static u8* sP4Tail;
 #endif
@@ -261,22 +263,32 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     auto pcm=context.FindPattern32(pcmPattern,sizeof(pcmPattern));
     if(pcm)pcm-=2;
     auto timer=context.FindPattern32(timerPattern,sizeof(timerPattern));
-    if(!pcm || !timer || pcm[0xb8/4]!=0xe12fff1e || timer[0x14/4]!=0xe12fff1e)
+    const u32 psgPattern[]={0xe92d40f0,0xe24dd004,0xe1a07001,0xe1a06003};
+    const u32 noisePattern[]={0xe92d40f0,0xe24dd004,0xe1a07002,0xe1a06003};
+    auto psg=context.FindPattern32(psgPattern,sizeof(psgPattern));
+    auto noise=context.FindPattern32(noisePattern,sizeof(noisePattern));
+    if(!pcm || !timer || !psg || !noise || pcm[0xb8/4]!=0xe12fff1e || timer[0x14/4]!=0xe12fff1e ||
+       psg[4]!=0xe59d501c || noise[4]!=0xe59d5018 || psg[0xa0/4]!=0xe12fff1e || noise[0x98/4]!=0xe12fff1e ||
+       psg[0x94/4]!=0xe1c010b8 || noise[0x8c/4]!=0xe1c010b8)
     {rtsProbeMessage("P4 disabled: sound SDK\nentry not recognized.");return;}
-    void* soundOriginal[]={SECTION_START(patch_rtsSoundPcm),SECTION_START(patch_rtsSoundTimer),SECTION_START(patch_rtsSoundExit)};
-    const u32 soundSize[]={SECTION_SIZE(patch_rtsSoundPcm),SECTION_SIZE(patch_rtsSoundTimer),SECTION_SIZE(patch_rtsSoundExit)};
-    u8* soundTarget[3];
-    for(u32 i=0;i<3;++i){soundTarget[i]=reserve(context.GetPatchHeap(),soundSize[i]);if(!soundTarget[i]){rtsProbeMessage("P4 disabled: sound patch\nspace unavailable.");return;}memcpy(soundTarget[i],soundOriginal[i],soundSize[i]);}
+    void* soundOriginal[]={SECTION_START(patch_rtsSoundPcm),SECTION_START(patch_rtsSoundTimer),SECTION_START(patch_rtsSoundReload),SECTION_START(patch_rtsSoundExit)};
+    const u32 soundSize[]={SECTION_SIZE(patch_rtsSoundPcm),SECTION_SIZE(patch_rtsSoundTimer),SECTION_SIZE(patch_rtsSoundReload),SECTION_SIZE(patch_rtsSoundExit)};
+    u8* soundTarget[4];
+    for(u32 i=0;i<4;++i){soundTarget[i]=reserve(context.GetPatchHeap(),soundSize[i]);if(!soundTarget[i]){rtsProbeMessage("P4 disabled: sound patch\nspace unavailable.");return;}memcpy(soundTarget[i],soundOriginal[i],soundSize[i]);}
     auto soundLink=[&](u32& literal,u32 i,u32 value){*(u32*)relocated(&literal,soundOriginal[i],soundTarget[i])=value;};
     soundLink(rtsSoundPcmBusy,0,ptr[4]);soundLink(rtsSoundPcmObserve,0,ptr[2]);soundLink(rtsSoundPcmResume,0,0x037ff2a0);
     soundLink(rtsSoundTimerBusy,1,ptr[4]);soundLink(rtsSoundTimerObserve,1,ptr[3]);soundLink(rtsSoundTimerResume,1,0x037ff070);
-    soundLink(rtsSoundExitBusy,2,ptr[4]);
-    const u32 exit=relocated((void*)rtsSoundExitHook,soundOriginal[2],soundTarget[2]);
+    soundLink(rtsSoundReloadObserve,2,ptr[13]);
+    soundLink(rtsSoundExitBusy,3,ptr[4]);
+    const u32 exit=relocated((void*)rtsSoundExitHook,soundOriginal[3],soundTarget[3]);
     pcm[0]=timer[0]=0xe51ff004;
     pcm[1]=relocated((void*)rtsSoundPcmHook,soundOriginal[0],soundTarget[0]);
     timer[1]=relocated((void*)rtsSoundTimerHook,soundOriginal[1],soundTarget[1]);
     pcm[0xb8/4]=0xea000000|(((exit-0x037ff350-8)>>2)&0xffffff);
     timer[0x14/4]=0xea000000|(((exit-0x037ff07c-8)>>2)&0xffffff);
+    const u32 reload=relocated((void*)rtsSoundReloadHook,soundOriginal[2],soundTarget[2]);
+    psg[0x94/4]=0xeb000000|(((reload-0x037ff274-8)>>2)&0xffffff);
+    noise[0x8c/4]=0xeb000000|(((reload-0x037ff1bc-8)>>2)&0xffffff);
     *(u32*)relocated(&rts7_operation_address,SECTION_START(patch_rts7),target)=ptr[6]+offsetof(RtsP4Shared,operation);
     *(u32*)relocated(&rts7_begin_address,SECTION_START(patch_rts7),target)=ptr[1];
     *(u32*)relocated(&rts7_loop_address,SECTION_START(patch_rts7),target)=ptr[0];
@@ -290,7 +302,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
 #ifdef PICO_RTS_VIDEO_CAPTURE
 #ifdef PICO_RTS_RESTORE_PROBE
 #ifdef PICO_RTS_CPU_TRACE
-    rtsProbeMessage("RTS research: Sound check P4.7\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2/S9 line.");
+    rtsProbeMessage("RTS research: PSG capture P4.8\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2/S9 line.");
 #else
     rtsProbeMessage("RTS research: restore P4.2\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nAudio restarts. 3D incomplete.");
 #endif

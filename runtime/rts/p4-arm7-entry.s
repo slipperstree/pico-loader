@@ -46,3 +46,4 @@ gRtsP4Pointers:
     .word gRtsSoundBusy,gRtsSoundShadow,gRtsP4,gRtsP4Identity
     .word rtsArm9RestoreTail,gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4FreshSlot
     .word gRtsP4Scratch
+    .word rtsSoundObserveReload
