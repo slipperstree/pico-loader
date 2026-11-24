@@ -42,6 +42,8 @@
 #define RTS_M2_MAX_EXTENTS 32u
 #define RTS_M2_CONFIG_FULL_VERIFY 0x80000000u
 #define RTS_M2_VERIFY_PATH "/_pico/rts-verify.txt"
+#define RTS_P4_CONFIG_LOAD_VERIFY 0x40000000u
+#define RTS_P4_LOAD_VERIFY_PATH "/_pico/rts-load-verify.txt"
 #define RTS_M2_FLAG_DIAGNOSTIC 1u
 #define RTS_M2_FLAG_NO_READBACK 2u
 #define RTS_M2_TIMING_MAGIC 0x31544650u // PFT1: physical frame timing

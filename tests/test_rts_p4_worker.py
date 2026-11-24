@@ -29,7 +29,7 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False,refusal=None,source_alias=False,psg_first=False,refuse_code=None,private_ack_unready=False,release_ack_lost=False,verify_load=False,scene_change=False):
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -62,6 +62,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   if refusal=='sound_unsupported':put(cpu,shadow+12,1)
   if refusal=='sound_range':put(cpu,shadow+20,0x04000400)
  put(u,syms['gRtsP4TailAddress'],0x02000210)
+ if LIVE:put(u,syms['gRtsP4LoadVerify'],int(verify_load))
  # Tail stays part of the captured main RAM, outside the protected work arena.
  tail=syms['rtsArm9RestoreTail'];u.mem_write(0x02000210,bytes(u.mem_read(tail,meta['p4_tail_bytes'])))
  # The source capture's secure gate/stub may share this interval. Assert it doesn't.
@@ -70,7 +71,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  # Source and fixture target use the same original saved gate ABI.
  put(u,ctrl+4,int(load));put(a7,ctrl+4,int(load))
  fifo9=[0x12345678,0x55aa55aa];fifo7=[0x90001234]
- state={'final_wait':False,'final_polls':0,'private7':False,'parking7':False,'private_restore_order':False,'server7':False,'exmem_writes':[],'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
+ state={'applying':False,'final_wait':False,'final_polls':0,'private7':False,'parking7':False,'private_restore_order':False,'server7':False,'exmem_writes':[],'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
  cp=dict(zip(cpkeys,cpvalues));cp[(6,2,0)]=0
  if mutate:
   u.mem_write(0x02030000,b'changed progress'*30);u.mem_write(0x06810000,b'\xcc'*512);a7.mem_write(0x03800100,b'\xdd'*512)
@@ -82,6 +83,14 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   for i in range(4):half(cpu,0x04000102+i*4,0)
  half(a7,0x04000500,0x807f);half(a7,0x04000504,512);put(a7,0x04000400,0x8800407f)
  if psg_first:put(a7,0x040004b0,0xe3400301)
+ if scene_change:
+  assert LIVE and load
+  put(u,0x04000000,v[5]^0x100);put(u,0x04001000,v[6]^0x200)
+  u.mem_write(vc[0],bytes([v[9]^1]));cp[(13,0,1)]^=0x100
+  half(u,0x04000102,0x80);half(u,0x04000100,0x1234)
+  half(a7,0x04000102,0xc0);half(a7,0x04000100,0x4567)
+  half(u,0x04000204,h0[39]^0x0010) # target EXMEM must be restored, not current
+
  def a7read(cpu,ac,a,n,val,d):
   if a==0x04000180:half(cpu,a,(state['peer']<<8)|state['own'])
   elif a==0x04000184:half(cpu,a,0x8000|(0x4000 if refusal=='fifo7_error' else 0)|(0x100 if not fifo7 else 0)|(2 if len(fifo9)==16 else 0))
@@ -243,7 +252,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   elif a==ctrl+12 and val==1 and not LIVE:
    state['restored']=True;sync7();call7('RtsReleaseSoundRestart',[syms['gRtsP4Scratch'],syms['mmio']|1,0],True);call7('rtsEnterArm7Continuation',[mail+544])
   if 0x02000000<=a<0x02400000 and not base<=a<limit:
-   assert load and state['readcount']>=sectors,('Destructive write before validation',hex(a),state['readcount'])
+   assert load and (state['applying'] if LIVE else state['readcount']>=sectors),('Destructive write before accepted metadata',hex(a),state['readcount'])
  u.hook_add(UC_HOOK_MEM_WRITE,write)
  if '--bus-check' in sys.argv:
   def bus(cpu,ac,a,n,val,d):
@@ -253,7 +262,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  if '--fast-io' in sys.argv:
   def fileRead(cpu,a,n,d):
    index=cpu.reg_read(UC_ARM_REG_R0);out=cpu.reg_read(UC_ARM_REG_R1)
-   if partial and index==34 and state['readcount']>=sectors:
+   if partial and index==34 and (state['applying'] if LIVE else state['readcount']>=sectors):
     cpu.reg_write(UC_ARM_REG_R0,0);cpu.reg_write(UC_ARM_REG_PC,cpu.reg_read(UC_ARM_REG_LR));return
    cpu.mem_write(out,disk.get(physical[index],b'\0'*512));state['readcount']+=1
    if corrupt and index==33:put(cpu,out,get(cpu,out)^1)
@@ -263,6 +272,9 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    disk[physical[index]]=bytes(cpu.mem_read(src,512));state['writes']+=1
    cpu.reg_write(UC_ARM_REG_R0,1);cpu.reg_write(UC_ARM_REG_PC,cpu.reg_read(UC_ARM_REG_LR))
   u.hook_add(UC_HOOK_CODE,fileRead,begin=syms['readSector'],end=syms['readSector']);u.hook_add(UC_HOOK_CODE,fileWrite,begin=syms['writeSector'],end=syms['writeSector'])
+ if LIVE:
+  def applying(cpu,a,n,d):state['applying']=True
+  u.hook_add(UC_HOOK_CODE,applying,begin=syms['restoreDtcm'],end=syms['restoreDtcm'])
  done9=0x020f0000
  def done(cpu,a,n,d):state['done']=True;cpu.emu_stop()
  u.hook_add(UC_HOOK_CODE,done,begin=done9,end=done9)
@@ -340,6 +352,13 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert bytes(u.mem_read(h0[10],0x4000))==saved[512+0x400000:512+0x404000]
   assert bytes(u.mem_read(0x01ff8000,0x8000))==saved[512+0x404000:512+0x40c000]
   assert [cp[k] for k in cpkeys]==list(hh[81:100]),'Final CP15 differs from captured CPU state'
+  if LIVE:
+   assert any(st==1 for st,_ in state['stages'])==verify_load,'Load CRC pass must be opt-in'
+   assert state['readcount']<(sectors+80 if not verify_load else sectors*2+80)
+   if not verify_load:assert state['readcount']<sectors+80,'Default load scanned payload twice'
+   for i in range(4):assert struct.unpack('<H',u.mem_read(0x04000102+i*4,2))[0]==((hh[124+i//2]>>((i&1)*16))&65535)
+   assert struct.unpack('<H',u.mem_read(0x04000204,2))[0]==hh[39]
+   print('PASS load mode',('full CRC + apply' if verify_load else 'single payload pass, no L1'),'scene configuration replaced' if scene_change else '',state['readcount'],'sector reads',flush=True)
   assert [u.reg_read(reg) for reg in REGS]==list(hh[20:33])
   assert u.reg_read(UC_ARM_REG_SP)==hh[33] and u.reg_read(UC_ARM_REG_LR)==hh[34]
   assert u.reg_read(UC_ARM_REG_CPSR)==hh[36]|(32 if hh[34]&1 else 0)
@@ -395,13 +414,15 @@ if TRACE:
  print('PASS actual worker preflight accepts mirrored main RAM sound source without canonicalizing playback address',flush=True)
  (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','private_ack_timeout':'PASS','detailed_refusals':'PASS','sound_source_alias':'PASS','cold_psg11_save':'PASS','bus_priority_policy':'PASS' if '--bus-check' in sys.argv else 'not run','physical_hardware':False},indent=2))
  print('PASS trace save, load disabled with no card writes, ready timeout',flush=True);raise SystemExit(0)
-print('Executing independent boot / mutated-state P4 restore...',flush=True);b=make(disk,True,True);print('PASS independent runtime instance: validated file -> main/TCM/WRAM/video/audio + ARM9/ARM7 continuation',flush=True)
+print('Executing independent boot / mutated-state P4 restore...',flush=True);b=make(disk,True,True,scene_change=LIVE);print('PASS independent runtime instance: validated file -> main/TCM/WRAM/video/audio + ARM9/ARM7 continuation',flush=True)
 if '--restore-only' in sys.argv:
  (f/'p4-full-transport-restore.json').write_text(json.dumps({'restore':'PASS','actual_worker_sd_protocol':True,'physical_hardware':False},indent=2));raise SystemExit(0)
 print('Executing wrong ROM identity refusal...',flush=True);make(disk,True,True,identity=True);print('PASS wrong identity returns current game without destructive writes',flush=True)
-print('Executing payload corruption refusal...',flush=True);make(disk,True,True,corrupt=True);print('PASS corrupt payload returns current game without destructive writes',flush=True)
+print('Executing payload corruption refusal...',flush=True);make(disk,True,True,corrupt=True,verify_load=LIVE);print('PASS corrupt payload returns current game without destructive writes',flush=True)
 make({physical[0]:bytes(blank)},early_refusal=True)
 make({physical[0]:bytes(blank)},arm7_unready=True)
 print('Executing no-checkpoint refusal...',flush=True);make({physical[0]:bytes(blank)},True,True,empty=True);print('PASS no completed slot -> NO SAVE / fresh B, current game preserved',flush=True)
 if '--fast-io' in sys.argv:make(disk,True,True,partial=True)
-(f/'p4-model-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','cross_boot_mutated_restore':'PASS','wrong_identity':'PASS','payload_corruption':'PASS','pre_start_refusal':'PASS','arm7_ready_timeout':'PASS','missing_slot':'PASS','apply_read_failure':'PASS' if '--fast-io' in sys.argv else 'not run','sd_interface':'sector callback' if '--fast-io' in sys.argv else 'actual worker SD protocol','physical_hardware':False,'internal_3d_restored':False},indent=2))
+if LIVE:
+ print('Executing opt-in full-CRC restore...',flush=True);make(disk,True,True,verify_load=True)
+(f/'p4-model-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','cross_boot_mutated_restore':'PASS','wrong_identity':'PASS','payload_corruption':'PASS','pre_start_refusal':'PASS','arm7_ready_timeout':'PASS','missing_slot':'PASS','apply_read_failure':'PASS' if '--fast-io' in sys.argv else 'not run','sd_interface':'sector callback' if '--fast-io' in sys.argv else 'actual worker SD protocol','physical_hardware':False,'internal_3d_restored':False,'default_single_pass':'PASS' if LIVE else 'not run','changed_scene_restore':'PASS' if LIVE else 'not run','optional_full_crc_restore':'PASS' if LIVE else 'not run'},indent=2))

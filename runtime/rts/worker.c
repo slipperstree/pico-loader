@@ -443,7 +443,11 @@ void rtsM2Run(const u32* entryRegs)
         }
     }
     if(!s->videoActive)progressOpen();
+#ifdef PICO_RTS_LIVE_RESTORE
+    progress(0,0); // Setup; L1 is reserved for opt-in payload verification.
+#else
     progress(1,0);
+#endif
     clear(h,sizeof(*h));
     h->magic=RTS_M2_MAGIC;h->version=RTS_M2_VERSION;h->fileBytes=RTS_M2_FILE_BYTES;h->gameCode=RTS_M2_GAME;
     h->payloadBytes=RTS_M2_PAYLOAD_BYTES;h->workspaceBase=s->base;h->workspaceBytes=s->bytes;
@@ -605,7 +609,7 @@ void rtsM2Run(const u32* entryRegs)
     if(!writeSector(0,(const u32*)h) || !readSector(0,s->readback))fault(7);
     for(u32 i=0;i<128;++i)if(s->readback[i]!=((u32*)h)[i])fault(8);
 #ifdef PICO_RTS_RESTORE_PROBE
-    gRtsP4SavedSequence=h->sequence;gRtsP4FreshSlot=1;
+    gRtsP4SavedSequence=h->sequence;
 cleanup:
     rtsP4ReplayCurrent();
 #endif

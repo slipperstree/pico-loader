@@ -12,7 +12,7 @@ RtsP4Identity gRtsP4Identity __attribute__((aligned(32)));
 u32 gRtsP4TailAddress;
 u32 gRtsP4Arm7TailAddress;
 u32 gRtsP4SavedSequence;
-u32 gRtsP4FreshSlot;
+u32 gRtsP4LoadVerify;
 u32 gRtsP4Arm7Stack[96] __attribute__((aligned(8)));
 static u32 send(const RtsP4Queue* q)
 {
@@ -49,6 +49,11 @@ void rtsP4Arm7Begin(u32 originalIpc)
 static void restoreDevice7(void)
 {
     const u32* p=gRtsSoundShadow.reserved;
+    for(u32 i=0;i<4;++i)
+    {
+        u32 a=0x04000100+i*4,control=(p[21+i/2]>>((i&1)*16))&65535;
+        if(R16(a+2)!=control){R16(a+2)=0;R16(a)=(p[23+i/2]>>((i&1)*16))&65535;R16(a+2)=control;}
+    }
     R16(0x04000180)=p[19]&0x4f00;
     R16(0x04000184)=(p[20]&0x8404)|0x4000; // No FIFO clear after target replay.
     R16(0x04000304)=p[20]>>16;

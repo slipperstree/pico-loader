@@ -44,6 +44,6 @@ rtsP4Arm7Entry:
 gRtsP4Pointers:
     .word rtsP4Arm7Entry,rtsP4Arm7Begin,rtsSoundObservePcm,rtsSoundObserveTimer
     .word gRtsSoundBusy,gRtsSoundShadow,gRtsP4,gRtsP4Identity
-    .word rtsArm9RestoreTail,gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4FreshSlot
+    .word rtsArm9RestoreTail,gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4LoadVerify
     .word gRtsP4Scratch
     .word rtsSoundObserveReload,gRtsP4Arm7TailAddress

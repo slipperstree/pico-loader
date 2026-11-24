@@ -67,6 +67,8 @@ if LIVE:u.mem_write(hook,obj.read_bytes()) # restore current private tail after 
 put(u,mail+32,*([0xdeadbeef]*128));put(u,scratch,0x31525341,1,0x807f,512,0,0);put(u,ctrl+128,1,0x11223344)
 put(u,syms['gRtsSoundShadow']+400+16*4,0x0200807f) # master/bias packed
 put(u,mail,1,1,0,0,0)
+if LIVE:
+ half(u,0x04000102,0x80);half(u,0x04000100,0x1234);put(u,syms['gRtsSoundShadow']+400+21*4,0);put(u,syms['gRtsSoundShadow']+400+23*4,0x4567)
 state={'line':192,'next':0,'sent':[],'ready':False,'lowest_sp':syms['gRtsP4Arm7Stack']+meta['arm7_stack_bytes']};commands=[2,3,4,5]
 def read(cpu,ac,a,n,v,d):
  if a==0x04000180:half(cpu,a,6 if LIVE and state.get('parked') else 10)
@@ -76,6 +78,8 @@ def read(cpu,ac,a,n,v,d):
   if get(cpu,mail+4)==get(cpu,mail+8) and state['next']<len(commands):
    command=commands[state['next']];state['next']+=1;put(cpu,mail,command,state['next']+1)
    if command==2:put(cpu,mail+32,*([0xdeadbeef]*128))
+   if LIVE and command==5:
+    put(cpu,syms['gRtsSoundShadow']+400+21*4,0);put(cpu,syms['gRtsSoundShadow']+400+23*4,0x4567)
  elif a==ctrl+12 and state['ready']:put(cpu,a,1)
 def write(cpu,ac,a,n,v,d):
  sp=cpu.reg_read(UC_ARM_REG_SP)
@@ -106,4 +110,5 @@ assert get(u,mail+544+92)==c[2],'Scratch IRQ stack leaked into saved game contex
 assert u.reg_read(UC_ARM_REG_SP)==c[2]+48 and u.reg_read(UC_ARM_REG_CPSR)==c[3]
 print('PASS actual ARM7 RPC 1/2/3/4/5: private sector write, FIFO/audio preparation, coherent release -> saved IRQ without private-stack return')
 
+if LIVE:assert struct.unpack('<HH',u.mem_read(0x04000100,4))==(0x4567,0)
 print("ARM7 maximum observed stack:",syms["gRtsP4Arm7Stack"]+meta["arm7_stack_bytes"]-state["lowest_sp"],"/",meta["arm7_stack_bytes"])

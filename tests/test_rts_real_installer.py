@@ -7,6 +7,7 @@ from ndspy import codeCompression
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE
 from unicorn.arm_const import *
 full='--full' in sys.argv
+loadcrc='--load-crc' in sys.argv
 root=Path(sys.argv[1]);rompath=Path(sys.argv[2]);TRACE='--p43' in sys.argv;LIVE='--p49' in sys.argv;P4='--p4' in sys.argv or TRACE or LIVE;M32='--m32' in sys.argv or P4;M3='--m3' in sys.argv or M32;elf=root/('build/picoLoader9_DSPICO_restore_p49.elf' if LIVE else 'build/picoLoader9_DSPICO_trace_p43.elf' if TRACE else 'build/picoLoader9_DSPICO_restore_p4.elf' if P4 else 'build/picoLoader9_DSPICO_capture_m32.elf' if M32 else 'build/picoLoader9_DSPICO_capture_m3.elf' if M3 else 'build/picoLoader9_DSPICO_snapshot_m2.elf')
 # This optional integration test uses a separately supplied, exact A2GJ image.
 # No ROM data or extracted game code is written into the repository.
@@ -76,7 +77,7 @@ assert report['wfi_hooked'] and hooks==5,report
 u.mem_write(rom.arm7RamAddress,bytes(rom.arm7))
 sectors=(0x4c9800 if P4 else 0x4c9600 if M32 else 0x424400 if M3 else 0x40c200)//512
 words=[0x30505452 if P4 else 0x32565452 if M32 else 0x31435452 if M3 else 0x324d5452,0x40001 if P4 else 0x30002 if M32 else 0x30001 if M3 else 0x20001,sectors,1,0x800,0x10000,0x4a473241,0,sectors,0x1000]+[0]*62
-words[7]=0x80000000 if full else 0
+words[7]=(0x80000000 if full else 0)|(0x40000000 if loadcrc else 0)
 u.mem_write(symbols['gRtsSnapshotInfo'],struct.pack('<72I',*words))
 if P4:u.mem_write(symbols['gRtsP4LoaderIdentity'],bytes.fromhex('078631bbdc625a13340b961ea902b9475b7efbc2869ddbbde5999638f47d5eb4')+b'\0'*48)
 def prompt(uc,addr,size,data):
@@ -98,7 +99,7 @@ enabled=struct.unpack('<I',u.mem_read(enabled_literal,4))[0]
 assert instruction==0xe51ff004 and enabled==1
 assert worker==0x023fa000
 assert diagnostic==worker+meta['config_offset']+28
-assert state['warnings'] and ('live restore P4.9' if LIVE else 'PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
+assert state['warnings'] and ('fast restore P4.10' if LIVE else 'PSG capture P4.8' if TRACE else 'restore P4.2' if P4 else 'capture M3.2' if M32 else 'capture M3.1' if M3 else 'snapshot M2.6') in state['warnings'][-1],state['warnings']
 for symbol,expected in [('rts7_read_busy_address','dspico_readsdsectors_busy'),('rts7_write_busy_address','dspico_writesdsectors_busy')]:
     literal=struct.unpack('<I',u.mem_read(hook+symbols[symbol]-symbols['__start_patch_rts7'],4))[0]
     assert 0x03800000<=literal<0x03810000,(symbol,hex(literal))
@@ -148,10 +149,13 @@ if P4:
         assert struct.unpack('<I',u.mem_read(ptr[14],4))[0]==privateTail
         assert 0x0380bc90<=privateTail and privateTail+72<=0x0380c490
         report['arm7_private_restore_tail']=hex(privateTail)
+    if LIVE:
+        assert struct.unpack('<I',u.mem_read(ptr[11],4))[0]==int(loadcrc)
+        report['load_crc_enabled']=loadcrc
     report['persistent_identity']='loaded code SHA + build fingerprint (full ROM host-verified)'
     report['secure_tail']=hex(tail)
 report['clock']=hex(clock)
 report['workspace_bytes']=meta['memory_bytes']
 report.update({'arm7_hook':hex(hook),'worker':hex(worker),'diagnostic':hex(diagnostic),'enabled':enabled,'prompt':state['warnings'][-1]})
 print(json.dumps({k:v for k,v in report.items() if k not in ('allocations','requests')},indent=2))
-(folder/('installer-report-full.json' if full else 'installer-report.json')).write_text(json.dumps(report,indent=2),encoding='utf-8')
+(folder/('installer-load-crc-report.json' if loadcrc else 'installer-report-full.json' if full else 'installer-report.json')).write_text(json.dumps(report,indent=2),encoding='utf-8')

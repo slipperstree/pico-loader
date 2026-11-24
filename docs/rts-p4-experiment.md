@@ -2,13 +2,61 @@
 
 P4 connects the existing state primitives to live DSPico hotkeys for one
 host-verified A2GJ ROM/SDK 3.1 profile. It is an opt-in research build, not a
-general save-state release. Hardware restore validation is pending.
+general save-state release. Basic P4.9 save/restore has passed on the user's
+414/MSET 3DS; title-screen/cross-scene restore is being extended in P4.10.
 
 Save uses L+R+Down+A; load uses L+R+Down+B, held for 30 VBlanks. A single
 `game.rts` file is preallocated beside `game.nds`, preserving UTF-8 paths and
 the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
+
+## P4.10: single-pass load by default
+
+The user confirms P4.9 save and restore work in-game, including L1 then L2.
+Loading a gameplay checkpoint from the title screen shows L8 1005 B; fresh
+B resumes normally. The returned private slot is phase 2, sequence 8, with
+valid header and payload CRCs. Cross-boot title restore is not yet confirmed.
+
+P4.10 removes current-versus-saved equality tests for all 19 CP15 registers,
+EXMEM, ARM9/ARM7 timer controls, display controls and VRAM mapping. These
+scene differences are not reasons to refuse a checkpoint. Existing restore
+code reapplies saved CPU/display/VRAM state; DTCM is mapped to its saved base
+before writing it, and final EXMEM is taken from the checkpoint. Timer control
+changes are applied on both CPUs, restarting changed timers from sampled
+counter values. Matching timer controls retain the existing running timer.
+Exact timer reload and phase, internal 3D and unobserved write-only display
+state remain incomplete; permitting a transition is not proof of every
+cross-scene hardware result.
+
+The separate full-payload L1 CRC pass is now opt-in. The default is a single
+L2 payload read/apply pass plus a few header/context reads. Configure
+`/_pico/rts-load-verify.txt`: `full` enables L1 before L2; `fast`, missing,
+unreadable or unrecognized configuration disables L1. UTF-8 BOM, CRLF and
+trailing whitespace are supported. This option is independent of the existing
+save readback setting `/_pico/rts-verify.txt`. Option state is runtime-owned
+and not loaded from the snapshot. Payload CRCs are still generated on save.
+
+The 512-byte header CRC, file format/size/completion, game/build identity,
+memory bounds and saved return-frame structure remain checked. The default
+does not detect arbitrary corruption elsewhere in the payload before applying
+it. This is the requested usability/performance tradeoff, not a claim of
+verified full-file integrity. Build identity remains necessary because saved
+private hooks contain addresses in the resident worker; P4.9 snapshots must
+be recreated once in P4.10.
+
+The live build retains its existing `--p49` test selector and build paths;
+its launch prompt and distribution version are P4.10. The reserved arena is
+still 20480 bytes. The default local model applies a checkpoint after changing
+both display controls, VRAM mapping, CP15 process ID, EXMEM and both CPUs'
+timer configurations. It restores all compared RAM/TCM/WRAM/video/register
+state with no L1 and 9813 sector reads. The optional full-CRC mode and corrupt
+payload rejection are tested separately. Actual ARM7 command 5 is tested
+with different timer state, and real FatFs exercises both configuration modes.
+These are local models, not physical title-screen or SD-latency validation.
+
+To exercise loader option transfer, run the real installer test with
+`--p49 --load-crc`; the ordinary invocation checks the default-off value.
 
 ## P4.9: persistent restore with private ARM7 release
 

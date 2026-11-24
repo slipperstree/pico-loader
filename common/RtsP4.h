@@ -34,7 +34,7 @@ extern RtsP4Scratch gRtsP4Scratch;
 extern RtsP4Identity gRtsP4Identity;
 extern volatile uint32_t gRtsSoundBusy;
 extern RtsSoundShadow gRtsSoundShadow;
-extern uint32_t gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4FreshSlot,gRtsP4Arm7TailAddress;
+extern uint32_t gRtsP4TailAddress,gRtsP4SavedSequence,gRtsP4LoadVerify,gRtsP4Arm7TailAddress;
 void rtsP4Arm7Begin(uint32_t originalIpc);
 void rtsP4Arm7Entry(void);
 void rtsP4Arm7Loop(uint32_t originalIpc,uint32_t operation);

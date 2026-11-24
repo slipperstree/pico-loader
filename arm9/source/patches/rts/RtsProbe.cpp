@@ -228,6 +228,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     auto identity=(RtsP4Identity*)ptr[7];
     memcpy(identity,&gRtsP4LoaderIdentity,sizeof(*identity));
     memcpy(identity->build,RTS_P4_BUILD_SHA256,32);
+    *(u32*)ptr[11]=(gRtsSnapshotInfo.reserved&RTS_P4_CONFIG_LOAD_VERIFY)!=0;
     auto shadow=(RtsSoundShadow*)ptr[5];shadow->magic=RTS_SOUND_SHADOW_MAGIC;shadow->version=1;
 #endif
 #else
@@ -311,7 +312,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
     rtsProbeMessage("RTS research: PSG capture P4.8\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2/S9 line.");
 #else
 #ifdef PICO_RTS_LIVE_RESTORE
-    rtsProbeMessage("RTS research: live restore P4.9\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nResave after version change.");
+    rtsProbeMessage("RTS research: fast restore P4.10\nSave: L+R+Down+A\nLoad: L+R+Down+B\nLoad CRC optional, default off.\nResave after version change.");
 #else
     rtsProbeMessage("RTS research: restore P4.2\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nAudio restarts. 3D incomplete.");
 #endif

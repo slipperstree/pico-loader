@@ -20,19 +20,21 @@ static u32 p4HeaderCrc(RtsM2Header& h)
 }
 #endif
 
-static bool fullVerifyRequested()
+static bool verifyMode(const char* path,const char* enabled,bool fallback)
 {
-    // Absent, unreadable or unrecognised configuration falls back to full.
+    // Save readback retains its existing fallback; load verification is opt-in.
     FIL file;
-    if(f_open(&file,RTS_M2_VERIFY_PATH,FA_READ)!=FR_OK)return true;
+    if(f_open(&file,path,FA_READ)!=FR_OK)return fallback;
     char mode[16]{};UINT count=0;
     bool ok=f_read(&file,mode,sizeof(mode)-1,&count)==FR_OK;
     ok=(f_close(&file)==FR_OK)&&ok;
-    if(!ok)return true;
+    if(!ok)return fallback;
     while(count && (mode[count-1]=='\r' || mode[count-1]=='\n' || mode[count-1]==' ' || mode[count-1]=='\t'))mode[--count]=0;
     const char* value=mode;
     if(count>=3 && (unsigned char)mode[0]==0xef && (unsigned char)mode[1]==0xbb && (unsigned char)mode[2]==0xbf)value+=3;
-    return strcmp(value,"fast")!=0;
+    if(!strcmp(value,"full"))return !strcmp(enabled,"full");
+    if(!strcmp(value,"fast"))return !strcmp(enabled,"fast");
+    return fallback;
 }
 
 bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path)
@@ -115,7 +117,10 @@ bool PrepareRtsSnapshotFile(RtsSnapshotInfo& info,const char* path)
     info.version=RTS_M2_VERSION;
     info.fileSectors=RTS_M2_FILE_SECTORS;
     info.gameCode=RTS_M2_GAME;
-    info.reserved=fullVerifyRequested() ? RTS_M2_CONFIG_FULL_VERIFY : 0;
+    info.reserved=verifyMode(RTS_M2_VERIFY_PATH,"full",true) ? RTS_M2_CONFIG_FULL_VERIFY : 0;
+#ifdef PICO_RTS_RESTORE_PROBE
+    if(verifyMode(RTS_P4_LOAD_VERIFY_PATH,"full",false))info.reserved|=RTS_P4_CONFIG_LOAD_VERIFY;
+#endif
     info.magic=RTS_M2_MAGIC; // Publish only a complete, closed and synced mapping.
     return true;
 }

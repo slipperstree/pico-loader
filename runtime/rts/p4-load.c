@@ -17,6 +17,19 @@ static void checkedRead(u32 sector,u32* out){if(!RtsP4ReadSector(sector,out))Rts
 static int same(const void* a,const void* b,u32 n)
 {const u8* x=a;const u8* y=b;for(u32 i=0;i<n;++i)if(x[i]!=y[i])return 0;return 1;}
 static void zero(void* p,u32 n){u32* d=p;for(u32 i=0;i<n/4;++i)d[i]=0;}
+__attribute__((noinline,target("arm"))) static void restoreDtcm(u32 config)
+{__asm__ volatile("mcr p15,0,%0,c9,c1,0"::"r"(config):"memory");}
+static void restoreTimers9(const RtsM2Header* h,const RtsVideoCapture* v)
+{
+    // Keep a running timer untouched when its control already matches. A
+    // configuration transition restarts from the sampled count; exact reload
+    // and phase are not recoverable from the readable counter alone.
+    for(u32 i=0;i<4;++i)
+    {
+        u32 a=0x04000100+i*4,control=(h->reserved[86+i/2]>>((i&1)*16))&65535;
+        if(R16(a+2)!=control){R16(a+2)=0;R16(a)=(v->reserved[66+i/2]>>((i&1)*16))&65535;R16(a+2)=control;}
+    }
+}
 void rtsP4Arm9Begin(void)
 {
 #ifdef PICO_RTS_LIVE_RESTORE
@@ -133,6 +146,8 @@ u32 rtsP4FreezePayload(void)
     for(u32 i=0;i<16;++i)v->reserved[i]=R32(0x04000640+i*4);
     for(u32 i=0;i<9;++i)v->reserved[16+i]=R32(0x04000680+i*4);
     v->reserved[64]=gRtsP4.to9.count;v->reserved[65]=gRtsP4.to7.count;
+    v->reserved[66]=R16(0x04000100)|((u32)R16(0x04000104)<<16);
+    v->reserved[67]=R16(0x04000108)|((u32)R16(0x0400010c)<<16);
     for(u32 i=0;i<16;++i){v->reserved[32+i]=gRtsP4.to9.data[i];v->reserved[48+i]=gRtsP4.to7.data[i];}
     return 0;
 }
@@ -183,14 +198,18 @@ u32 rtsP4Load(const RtsP4CardState* card)
     if(!same(old->reserved+62,&gRtsP4Identity,32))return 1003;
     if(!same(old->reserved+70,gRtsP4Identity.build,32))return 1009;
     if(old->workspaceBase!=s->base || old->workspaceBytes!=s->bytes || !gRtsP4TailAddress ||
-       !same(old->reserved+43,h->reserved+43,76) || old->reserved[86]!=h->reserved[86] || old->reserved[87]!=h->reserved[87] ||
-       old->reserved[1]!=card->exmem || old->reserved[16]!=RTS_ARM9_CPU_MAGIC || old->reserved[17]!=1 ||
+       (old->dtcmConfig&63)!=10 || (old->dtcmConfig&~4095u)!=old->dtcmBase || old->itcmConfig!=0x20 ||
+       old->reserved[57]!=old->dtcmConfig || old->reserved[58]!=old->itcmConfig ||
+       old->reserved[16]!=RTS_ARM9_CPU_MAGIC || old->reserved[17]!=1 ||
        old->reserved[60] || old->reserved[59])return 1005;
     memcpy(h,old,512);
-    u32 value=~0u;
-    for(u32 i=0;i<RTS_P4_PAYLOAD_BYTES/512;++i)
-    {checkedRead(i+1,s->readback);value=RtsP4Crc(value,s->readback,128);RtsP4Heartbeat(i);if(!(i&63))RtsP4Progress(1,i);}
-    if(~value!=h->payloadCrc)return 1004;
+    if(gRtsP4LoadVerify)
+    {
+        u32 value=~0u;
+        for(u32 i=0;i<RTS_P4_PAYLOAD_BYTES/512;++i)
+        {checkedRead(i+1,s->readback);value=RtsP4Crc(value,s->readback,128);RtsP4Heartbeat(i);if(!(i&63))RtsP4Progress(1,i);}
+        if(~value!=h->payloadCrc)return 1004;
+    }
     // Capture format remains fixed and tightly scoped. All context checks read
     // file bytes, not the current game that is about to be overwritten.
     if(RtsBuildArm9Continuation(h,1,guestRead,0,&tail.continuation))return 1005;
@@ -204,15 +223,15 @@ u32 rtsP4Load(const RtsP4CardState* card)
     checkedRead(1+0x424200/512,s->readback);
     const RtsVideoCapture* video=(const RtsVideoCapture*)s->readback;
     if(video->magic!=RTS_VIDEO_MAGIC || video->version!=1 || video->vramBytes!=0xa4000 || video->paletteBytes!=2048 || video->oamBytes!=2048 ||
-       !same(video->display,gRtsP4Scratch.video.display,8) || !same(video->vram,gRtsP4Scratch.video.vram,36) || video->wram!=3 || video->reserved[64]>16 || video->reserved[65]>16)return 1005;
-    // L0 smoke test deliberately leaves internal 3D/write-only state unchanged.
-    // It requires the same display configuration; it does not promise scene rollback.
-    u32 timer7a=gRtsSoundShadow.reserved[21],timer7b=gRtsSoundShadow.reserved[22];
+       video->wram!=3 || video->reserved[64]>16 || video->reserved[65]>16)return 1005;
+    // Current scene configuration is replaced, not compared with the target.
+    // Internal 3D and unobserved write-only state remain incomplete.
     checkedRead(1+RTS_P4_SOUND_OFFSET/512,s->readback);memcpy(&gRtsP4Scratch.sound,s->readback,512);
     const u32* io=gRtsP4Scratch.sound.reserved;
-    if(io[21]!=timer7a || io[22]!=timer7b || RtsBuildSoundRestart(&gRtsP4Scratch.sound,io,io[16]&65535,io[16]>>16,io[26],0))return 1006;
+    if(RtsBuildSoundRestart(&gRtsP4Scratch.sound,io,io[16]&65535,io[16]>>16,io[26],0))return 1006;
     // Destructive phase: transport failure now holds both CPUs, never resumes a
     // partly restored game. All code and stacks executing here are in workspace.
+    restoreDtcm(h->dtcmConfig); // Worker code and stack are in main RAM.
     for(u32 i=0;i<RTS_P4_PAYLOAD_BYTES/512;++i)
     {
         checkedRead(i+1,s->readback);
@@ -233,6 +252,7 @@ u32 rtsP4Load(const RtsP4CardState* card)
     zero(s->readback,512);memcpy(s->readback,h->reserved+16,184);
     RtsArm9CpuState* cpu=(RtsArm9CpuState*)s->readback;
     memcpy(cpu->padding,v,112); // Preserve final readable display state before scratch becomes sound plan.
+    restoreTimers9(h,v);
     finishDisplay((const RtsVideoCapture*)cpu->padding);
     io=gRtsSoundShadow.reserved;
     if(RtsBuildSoundRestart(&gRtsSoundShadow,io,io[16]&65535,io[16]>>16,io[26],&gRtsP4Scratch.plan))RtsP4Fault(8040);
@@ -242,8 +262,8 @@ u32 rtsP4Load(const RtsP4CardState* card)
 #ifdef PICO_RTS_LIVE_RESTORE
     // Return Slot-1, retaining ARM9 RAM priority until ARM7 has restored all
     // registers and entered its private-WRAM tail.
-    R16(0x04000204)=card->exmem&~0x8000u;
-    if((R16(0x04000204)^(card->exmem&~0x8000u))&0x8800)RtsP4Fault(9);
+    R16(0x04000204)=h->reserved[1]&~0x8000u;
+    if((R16(0x04000204)^(h->reserved[1]&~0x8000u))&0x8800)RtsP4Fault(9);
     rtsP4Request(5,0);
     u32 previous=R16(0x04000006),frames=0,spins=0x400000;
     while((R16(0x04000180)&15)!=7)
@@ -253,11 +273,11 @@ u32 rtsP4Load(const RtsP4CardState* card)
         {RtsP4OpenProgress();RtsP4Fault(8140+(R16(0x04000180)&15));}
         previous=line;
     }
-    R16(0x04000204)=card->exmem;
-    if((R16(0x04000204)^card->exmem)&0x8800)RtsP4Fault(9);
+    R16(0x04000204)=h->reserved[1];
+    if((R16(0x04000204)^h->reserved[1])&0x8800)RtsP4Fault(9);
 #else
-    R16(0x04000204)=card->exmem;
-    if((R16(0x04000204)^card->exmem)&0x800)RtsP4Fault(9);
+    R16(0x04000204)=h->reserved[1];
+    if((R16(0x04000204)^h->reserved[1])&0x800)RtsP4Fault(9);
     rtsP4Request(5,0);
 #endif
     R16(0x04000184)=((h->reserved[85]>>16)&0x8404)|0x4000;
