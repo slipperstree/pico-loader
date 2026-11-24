@@ -264,6 +264,9 @@ static void signalDone(void)
         if((REG16(IPC)&15)!=12)return;
 #endif
     }
+#ifdef PICO_RTS_CPU_TRACE
+    RtsP4Fault(8130); // Retain ARM9 main RAM priority if private ACK never arrives.
+#endif
 }
 __attribute__((noreturn)) static void fault(u32 code)
 {
@@ -418,11 +421,19 @@ void rtsM2Run(const u32* entryRegs)
         signalDone();return; // Never issue SD commands after a refusal.
     }
     // ARM7 published C only after its whole SD transaction and hardware guards.
-    // Both CPUs stay parked. Borrow Slot-1 only, preserving all other EXMEM bits.
-    if(oldExmem&0x800)
+    // The save-only trace server executes ARM7 code in shared main RAM.
+    // Borrow ARM9 priority before sending start 8, not after ARM7 has entered.
+    // Full restore needs a separate final-tail ownership protocol before this
+    // policy can be enabled there; trace builds intentionally exclude load.
+#ifdef PICO_RTS_CPU_TRACE
+    const u32 borrowedExmem=0x8800u; // Slot-1 + main RAM priority.
+#else
+    const u32 borrowedExmem=0x800u; // Legacy/full experiment unchanged.
+#endif
+    if(oldExmem&borrowedExmem)
     {
-        REG16(0x04000204)=oldExmem&~0x800u;
-        if(REG16(0x04000204)&0x800)
+        REG16(0x04000204)=oldExmem&~borrowedExmem;
+        if(REG16(0x04000204)&borrowedExmem)
         {
             REG16(0x04000204)=oldExmem;
             progressClose();showRefusal(2);signalDone();return;
@@ -599,10 +610,17 @@ cleanup:
     REG16(0x040001a0)=aux;
     REG32(CARDCTRL)=oldCardControl&0x7f7fffff;
     setCache(oldCi,oldBuffer,control);
-    REG16(0x04000204)=oldExmem;
-    if((REG16(0x04000204)^oldExmem)&0x800)fault(9);
-    progressClose();
+#ifdef PICO_RTS_CPU_TRACE
+    // Keep progress visible if private ACK times out; restore priority only
+    // after ARM7 is parked in private WRAM waiting for the outer hook.
     signalDone();
+#endif
+    REG16(0x04000204)=oldExmem;
+    if((REG16(0x04000204)^oldExmem)&borrowedExmem)fault(9);
+    progressClose();
+#ifndef PICO_RTS_CPU_TRACE
+    signalDone();
+#endif
 }
 
 #ifdef PICO_RTS_RESTORE_PROBE

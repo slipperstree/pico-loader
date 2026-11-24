@@ -279,10 +279,19 @@ rts7_wait_release:
     ldrh r1, [r0]
     and r1, r1, #15
     cmp r1, #10
+#ifdef PICO_RTS_CPU_TRACE
+    beq 94f
+    cmp r1,#13
+94:
+#endif
     bne rts7_restore
     subs r5, r5, #1
     bne rts7_wait_release
+#ifdef PICO_RTS_CPU_TRACE
+    b rts7_m2_fault // Never run game code while ARM9 still owns the handoff.
+#else
     b rts7_restore
+#endif
 #ifdef PICO_RTS_SNAPSHOT
 rts7_m2_decline:
     ldr r0,rts7_ipc

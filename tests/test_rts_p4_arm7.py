@@ -19,11 +19,13 @@ def model7():
 for mask,cancel in ((0x381,False),(0x382,False),(0x381,True)):
  u=model7();done=0x03809000;
  if cancel:put(u,hook+loader['rts7_spin_budget']-loader['__start_patch_rts7'],32)
- state={'own':0,'peer':0,'line':192,'park':False,'ticks':0,'entered':False,'checkpoints':[]};sp=0x0380f000
+ state={'own':0,'peer':0,'line':192,'park':False,'ticks':0,'entered':False,'checkpoints':[],'private_ack':False,'private_reads':0};sp=0x0380f000
  def read(cpu,ac,a,n,v,d):
   if a==0x04000130:half(cpu,a,0x3ff^mask)
   elif a==0x04000180:
-   if cancel and state['park']:
+   if TRACE and state['private_ack']:
+    state['private_reads']+=1;state['peer']=13 if state['private_reads']<=4 else 0
+   elif cancel and state['park']:
     state['ticks']+=1;state['peer']=13 if state['ticks']>240 else 9+(state['ticks']//4)%2
    half(cpu,a,(state['own']<<8)|state['peer'])
   elif a==0x04000006:
@@ -35,6 +37,7 @@ for mask,cancel in ((0x381,False),(0x382,False),(0x381,True)):
   if a==0x04000180:
    state['own']=(v>>8)&15
    if TRACE and 1<=state['own']<=10:state['checkpoints'].append(state['own'])
+   if TRACE and state['own']==0 and state['park']:state['private_ack']=True
    if state['own']==11:state['peer']=10
    if state['own']==12:
     assert get(cpu,syms['gRtsArm7Mailbox']+544)==0,'Capture ran before C/visible ARM9 phase'
@@ -48,6 +51,7 @@ for mask,cancel in ((0x381,False),(0x382,False),(0x381,True)):
   u.emu_start(hook,done,count=1000000);assert u.reg_read(UC_ARM_REG_PC)==done and u.reg_read(UC_ARM_REG_SP)==sp+8
   assert [u.reg_read(x) for x in REGS[2:]]==[0x12340000+j for j in range(11)]
  assert state['park'] and state['entered']==(not cancel)
+ if TRACE:assert state['private_ack'] and state['private_reads']>=5,'Did not wait in private WRAM for ARM9 release'
  if not cancel:
   assert get(u,syms['gRtsP4']+4)==(mask==0x382)
   if TRACE:assert state['checkpoints']==list(range(1,11)),state['checkpoints']

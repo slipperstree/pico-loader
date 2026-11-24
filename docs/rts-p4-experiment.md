@@ -10,6 +10,47 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.6: borrow main RAM priority while the save server is in shared RAM
+
+P4.5 hardware last showed S2 0044. The MMIO read has happened, but the start
+store can activate ARM7 before the next trace stamp stores to main RAM. Thus
+the stamp does not prove that the MMIO store itself stalled.
+
+The independent successful M3.2 capture records EXMEMCNT=0xe880: bit 15 gives
+ARM7 main RAM priority. M3.2 polls from private WRAM, while P4 moved the ARM7
+server and its hot loop into main RAM. The P4 worker borrowed only Slot-1
+(bit 11), leaving the now continuously fetching ARM7 at higher RAM priority.
+This is a concrete arbitration-policy mismatch and a plausible cause of ARM9
+starvation at the first post-start RAM access. The prior model omitted bus
+arbitration, so its successful runs could not exclude this failure mode.
+
+The save-only trace build now borrows both Slot-1 and ARM9 main RAM priority
+(mask 0x8800), reads the bits back before start, and preserves the original
+EXMEMCNT in the snapshot. On normal exit it sends D and waits for ARM7's zero
+ACK from private WRAM BEFORE restoring the original priority. ARM7 holds in
+private WRAM while peer D remains, so it cannot resume game/main-RAM execution
+before ARM9 restores resources and the outer hook restores its original nibble.
+A missing private ACK fails closed (8130), retaining ARM9 priority.
+
+This change is deliberately limited to PICO_RTS_CPU_TRACE, which disables load.
+The unpublished full restore needs its own final handoff/priority protocol;
+simply applying this borrowing policy there would expose its early EXMEM
+restore before the final CPU continuation. Do not claim read-path validation.
+
+A conditional arbitration guard rejects ARM9 data accesses to main RAM while
+the modelled main-RAM ARM7 server is active with bit 15 set. Under that explicit
+hazard assumption, the preserved P4.5 binary fails at its post-start trace RAM
+write and P4.6 passes save/cleanup. This is an ordering regression test, not an
+emulator of all DS bus timing or proof of the unique hardware cause.
+The actual ARM7 hook is tested for waiting in private WRAM through D before
+resuming, as well as register/frame preservation. Missing private ACK is tested
+with a visible 8130 error and retained ARM9 priority. The optional old-binary
+check is in tests/test_rts_p4_priority_regression.py.
+
+Reference for EXMEMCNT bit 15:
+[BlocksDS libnds memory definitions](https://github.com/blocksds/libnds/blob/master/include/nds/memory.h).
+Hardware validation is pending; the added IPC trace IDs remain available.
+
 ## P4.5: distinguish the C renderer return from the IPC transfer
 
 Hardware P4.4 last showed S2 0041. This precedes the waiting loop and its

@@ -22,7 +22,7 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False):
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False,early_refusal=False,ipc_unlatched=False,release_unready=False):
  u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
@@ -55,7 +55,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  # Source and fixture target use the same original saved gate ABI.
  put(u,ctrl+4,int(load));put(a7,ctrl+4,int(load))
  fifo9=[0x12345678,0x55aa55aa];fifo7=[0x90001234]
- state={'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
+ state={'server7':False,'exmem_writes':[],'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
  cp=dict(zip(cpkeys,cpvalues));cp[(6,2,0)]=0
  if mutate:
   u.mem_write(0x02030000,b'changed progress'*30);u.mem_write(0x06810000,b'\xcc'*512);a7.mem_write(0x03800100,b'\xdd'*512)
@@ -153,17 +153,21 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
    for i,byte in enumerate(before):cache['dirty'].setdefault(a+i,byte)
   spNow=cpu.reg_read(UC_ARM_REG_SP)
   if stack<=spNow<=stack+1024:state['minsp9']=min(state['minsp9'],spNow)
+  if a==0x04000204:state['exmem_writes'].append((val,state['server7']))
   if a==0x04000188:fifo7.append(val)
   elif a==0x04000180:
    state['own']=(val>>8)&15
    if ipc_unlatched and state['own']==8:state['own']=10;return
    if state['own']==8:
+    state['server7']=True
     assert not cp[(1,0,0)]&4 and (2,0) in state['stages'],'ARM7 started before visible feedback/cache off'
     if not arm7_unready:
      sync7();call7('rtsP4Arm7Begin',[0x4000],True)
      cpu.mem_write(ctrl,bytes(a7.mem_read(ctrl,224)));put(cpu,ctrl+4,int(load));put(cpu,ctrl+8,1)
      cpu.mem_write(shadow,bytes(a7.mem_read(shadow,512)))
-   elif state['own']==13:state['peer']=0
+   elif state['own']==13:
+    if release_unready:state['peer']=10
+    else:state['peer']=0;state['server7']=False
    elif state['own']==14:state['fault']=get(cpu,cfg+296+72);cpu.emu_stop()
   elif a==0x040001a4 and val&0x80000000:
    assert not cp[(1,0,0)]&4
@@ -181,6 +185,11 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   if 0x02000000<=a<0x02400000 and not base<=a<limit:
    assert load and state['readcount']>=sectors,('Destructive write before validation',hex(a),state['readcount'])
  u.hook_add(UC_HOOK_MEM_WRITE,write)
+ if '--bus-check' in sys.argv:
+  def bus(cpu,ac,a,n,val,d):
+   exmem=struct.unpack('<H',cpu.mem_read(0x04000204,2))[0]
+   assert not (state['server7'] and exmem&0x8000),('ARM9 shared main RAM access with ARM7 priority/server running',hex(a),hex(exmem),hex(cpu.reg_read(UC_ARM_REG_PC)))
+  u.hook_add(UC_HOOK_MEM_READ|UC_HOOK_MEM_WRITE,bus,begin=0x02000000,end=0x023fffff)
  if '--fast-io' in sys.argv:
   def fileRead(cpu,a,n,d):
    index=cpu.reg_read(UC_ARM_REG_R0);out=cpu.reg_read(UC_ARM_REG_R1)
@@ -217,6 +226,10 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert state['done'] and not state['fault'] and not state['writes'] and not state['readcount'] and not state['rpc']
   assert (8,256) in state['stages'] and 8!=state['own'] and fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa]
   print('PASS refusal before start: no SD, no unstarted FIFO replay, current game resumes',flush=True);return state
+ if release_unready:
+  assert state['fault']==8130 and (9,8130) in state['stages'] and not state['done'] and not state['writes']
+  assert state['server7'] and not struct.unpack('<H',u.mem_read(0x04000204,2))[0]&0x8800
+  print('PASS missing private ARM7 ACK -> visible S9 8130, ARM9 priority retained, no card writes',flush=True);return state
  if ipc_unlatched:
   assert state['fault']==8128 and not state['done'] and not state['writes'] and not state['rpc']
   print('PASS outgoing IPC nibble not latched -> S9 8128 before ARM7 wait or card I/O',flush=True);return state
@@ -257,6 +270,11 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert h[6]==zlib.crc32(blob[512:]);crc=bytearray(blob[:512]);struct.pack_into('<I',crc,480,0);assert h[120]==zlib.crc32(crc)
   assert blob[512+0x424400:512+0x4c9400]==targetvideo
   assert state['writes']==sectors+1
+  if '--bus-check' in sys.argv:
+   assert struct.unpack('<H',u.mem_read(0x04000204,2))[0]==h0[39]
+   assert state['exmem_writes'] and all(not (value&0x8000 and running) for value,running in state['exmem_writes'])
+   assert h[39]==h0[39] and not state['server7'],'Original EXMEM was lost or restored before private ACK'
+   print('PASS ARM9 main RAM priority acquired before start and original EXMEM restored after ARM7 private ACK',flush=True)
  return state
 disk={physical[0]:bytes(blank)}
 privateModel=r.parent/'实机记录'/'P4-local-model.bin'
@@ -269,7 +287,8 @@ if TRACE:
  make(disk,True,True)
  make({physical[0]:bytes(blank)},arm7_unready=True)
  make({physical[0]:bytes(blank)},ipc_unlatched=True)
- (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','physical_hardware':False},indent=2))
+ make(disk,True,True,release_unready=True)
+ (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','ipc_readback_failure':'PASS','private_ack_timeout':'PASS','bus_priority_policy':'PASS' if '--bus-check' in sys.argv else 'not run','physical_hardware':False},indent=2))
  print('PASS trace save, load disabled with no card writes, ready timeout',flush=True);raise SystemExit(0)
 print('Executing independent boot / mutated-state P4 restore...',flush=True);b=make(disk,True,True);print('PASS independent runtime instance: validated file -> main/TCM/WRAM/video/audio + ARM9/ARM7 continuation',flush=True)
 if '--restore-only' in sys.argv:
