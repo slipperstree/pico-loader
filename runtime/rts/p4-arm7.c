@@ -12,7 +12,7 @@ RtsP4Identity gRtsP4Identity __attribute__((aligned(32)));
 u32 gRtsP4TailAddress;
 u32 gRtsP4SavedSequence __attribute__((aligned(32)));
 u32 gRtsP4FreshSlot;
-u32 gRtsP4Arm7Stack[128] __attribute__((aligned(8)));
+u32 gRtsP4Arm7Stack[96] __attribute__((aligned(8)));
 static u32 send(const RtsP4Queue* q)
 {
     u32 n=q->count;if(n>16)return 1;
@@ -54,8 +54,10 @@ static void restoreDevice7(void)
     R32(0x04000214)=~p[18];R32(0x04000210)=p[17];
 }
 __attribute__((noreturn)) static void stop(void){for(;;)__asm__ volatile("nop");}
-void rtsP4Arm7Loop(void)
+void rtsP4Arm7Loop(u32 originalIpc)
 {
+    rtsP4Arm7Begin(originalIpc);
+    gRtsP4.ready=1; // Publish sampled audio/FIFO state before ARM9 uses it.
     volatile RtsArm7Mailbox* m=&gRtsArm7Mailbox;
     u32 previous=R16(0x04000006),lastPeer=10,budget=0x04000000,destructive=0;
     for(;;)

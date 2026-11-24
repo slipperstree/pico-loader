@@ -3,10 +3,11 @@
 .arm
 .section .text.p4Arm7Entry,"ax"
 .global rtsP4Arm7Entry
+.type rtsP4Arm7Entry,%function
 rtsP4Arm7Entry:
     stmdb sp!,{r0-r12,lr}
     mov r4,sp
-    ldr sp,=gRtsP4Arm7Stack+512
+    ldr sp,=gRtsP4Arm7Stack+384
     stmdb sp!,{r4,lr}
     ldr r3,=rtsP4Arm7Loop
     mov lr,pc

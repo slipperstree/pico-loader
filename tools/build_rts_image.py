@@ -67,6 +67,7 @@ for symbol,label in [('gRtsArm7Mailbox','mailbox'),('rtsArm7CaptureContext','arm
     if symbol in symbols:report[label+'_offset']=symbols[symbol]-base
 if 'gRtsP4Pointers' in symbols:
     report['p4_pointers_offset']=symbols['gRtsP4Pointers']-base
+    report['arm7_stack_bytes']=384
     report['p4_tail_bytes']=symbols['rtsArm9RestoreTailEnd']-symbols['rtsArm9RestoreTail']
     report['p4_build_fingerprint']=fingerprint.hexdigest()
 out.with_suffix('.json').write_text(json.dumps(report,indent=2),encoding='utf-8')

@@ -393,6 +393,10 @@ void rtsM2Run(const u32* entryRegs)
     invalidateLine(shared);
     reason|=s->info.reserved;
 #ifdef PICO_RTS_RESTORE_PROBE
+    // CPU9 can show a safe stage before ARM7's new C preflight. This makes a
+    // failed ARM7 entry distinguishable from SD I/O, and gives it a deadline.
+    if(!reason){progressOpen();progress(0,0);}
+    if(!rtsP4Await7())fault(81);
     reason|=gRtsP4.error;
 #endif
     u32 first;
@@ -400,6 +404,9 @@ void rtsM2Run(const u32* entryRegs)
     if(reason)
     {
         h->error=reason;
+#ifdef PICO_RTS_RESTORE_PROBE
+        progressClose();
+#endif
         showRefusal(reason);
         signalDone();return; // Never issue SD commands after a refusal.
     }
@@ -411,10 +418,10 @@ void rtsM2Run(const u32* entryRegs)
         if(REG16(0x04000204)&0x800)
         {
             REG16(0x04000204)=oldExmem;
-            showRefusal(2);signalDone();return;
+            progressClose();showRefusal(2);signalDone();return;
         }
     }
-    progressOpen();
+    if(!s->videoActive)progressOpen();
     progress(1,0);
     clear(h,sizeof(*h));
     h->magic=RTS_M2_MAGIC;h->version=RTS_M2_VERSION;h->fileBytes=RTS_M2_FILE_BYTES;h->gameCode=RTS_M2_GAME;

@@ -173,10 +173,9 @@ rts7_m2_guard_done:
     strne r2,[r0]
 #endif
 #ifdef PICO_RTS_RESTORE_PROBE
-    mov r0,r10
-    ldr r12,rts7_begin_address
-    mov lr,pc
-    bx r12
+    ldr r0,rts7_operation_address
+    mov r3,#0
+    str r3,[r0,#4] // ARM7 pause-ready=0 BEFORE publishing C.
 #endif
     ldr r0, rts7_ipc
     orr r3, r10, #0xc00
@@ -191,6 +190,7 @@ rts7_m2_guard_done:
     ldr r7, rts7_frames
 #endif
 #ifdef PICO_RTS_RESTORE_PROBE
+    mov r0,r10 // Original IPC control for Begin, on the independent stack.
     ldr r12,rts7_loop_address
     mov lr,pc
     bx r12

@@ -22,8 +22,8 @@ def half(u,a,v):u.mem_write(a,struct.pack('<H',v))
 snapshotbytes=0x4c9800;sectors=snapshotbytes//512
 extents=[(4096,0x1000),(4096,0x3000),(sectors-8192,0x7000)];physical=[a+i for n,a in extents for i in range(n)]
 blank=bytearray(512);struct.pack_into('<6I',blank,0,0x30505452,0x40001,snapshotbytes,0x4a473241,0,0x4c9600)
-def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False):
- u=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM)
+def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False,empty=False,arm7_unready=False):
+ u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_946);a7=Uc(UC_ARCH_ARM,UC_MODE_ARM);a7.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(h0[10],0x4000),(0x01ff8000,0x8000),(0x04000000,0x2000),(0x04100000,0x1000),(0x06800000,0xa4000),(0x05000000,0x1000),(0x07000000,0x1000)]:u.mem_map(a,n)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:a7.mem_map(a,n)
  for cpu in (u,a7):cpu.mem_write(0x02000000,capture[512:512+0x400000]);cpu.mem_write(base,b'\0'*meta['memory_bytes']);cpu.mem_write(base,bytes(image))
@@ -54,7 +54,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  # Source and fixture target use the same original saved gate ABI.
  put(u,ctrl+4,int(load));put(a7,ctrl+4,int(load))
  fifo9=[0x12345678,0x55aa55aa];fifo7=[0x90001234]
- state={'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+512,'restored':False,'cpclosed':False,'readcount':0}
+ state={'mode':'idle','word':0,'sector':0,'readsector':0,'own':10,'peer':12,'polls':0,'vcount':192,'frames':0,'fault':None,'done':False,'stages':[],'writes':0,'rpc':[],'minsp9':stack+1024,'minsp7':a7stack+meta['arm7_stack_bytes'],'restored':False,'cpclosed':False,'readcount':0}
  cp=dict(zip(cpkeys,cpvalues));cp[(6,2,0)]=0
  if mutate:
   u.mem_write(0x02030000,b'changed progress'*30);u.mem_write(0x06810000,b'\xcc'*512);a7.mem_write(0x03800100,b'\xdd'*512)
@@ -73,7 +73,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  a7.hook_add(UC_HOOK_MEM_READ,a7read,begin=0x04000000,end=0x04100003);a7.hook_add(UC_HOOK_MEM_WRITE,a7write)
  done7=0x020f0000
  def call7(name,args,thumb=False):
-  a7.reg_write(UC_ARM_REG_CPSR,0xd2 if name=='rtsEnterArm7Continuation' else 0xdf);a7.reg_write(UC_ARM_REG_SP,a7stack+512);a7.reg_write(UC_ARM_REG_LR,done7)
+  a7.reg_write(UC_ARM_REG_CPSR,0xd2 if name=='rtsEnterArm7Continuation' else 0xdf);a7.reg_write(UC_ARM_REG_SP,a7stack+meta['arm7_stack_bytes']);a7.reg_write(UC_ARM_REG_LR,done7)
   for reg,val in zip(REGS,args):a7.reg_write(reg,val)
   end=(words(bytes(a7.mem_read(mail+544,512)))[19]&~1) if name=='rtsEnterArm7Continuation' else done7
   try:a7.emu_start(syms[name]|int(thumb),end,count=100000)
@@ -100,7 +100,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  u.hook_add(UC_HOOK_MEM_READ,rpc,begin=mail+8,end=mail+11)
  # Use the actual ARM7 begin helper to sample audio and drain pending FIFO7.
  call7('rtsP4Arm7Begin',[0x4000],True)
- u.mem_write(ctrl,bytes(a7.mem_read(ctrl,224)));put(u,ctrl+4,int(load));u.mem_write(shadow,bytes(a7.mem_read(shadow,512)))
+ u.mem_write(ctrl,bytes(a7.mem_read(ctrl,224)));put(u,ctrl+8,0 if arm7_unready else 1);put(u,ctrl+4,int(load));u.mem_write(shadow,bytes(a7.mem_read(shadow,512)))
  def coproc(cpu,a,n,d):
   if cpu.reg_read(UC_ARM_REG_CPSR)&32:return
   ins=get(cpu,a);key=((ins>>16)&15,ins&15,(ins>>5)&7);rd=(ins>>12)&15
@@ -189,6 +189,9 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  u.hook_add(UC_HOOK_MEM_INVALID,invalid)
  try:u.emu_start(syms['rtsM2Run']|1,0,count=700000000)
  except Exception as e:raise AssertionError(('ARM9',hex(u.reg_read(UC_ARM_REG_PC)),hex(u.reg_read(UC_ARM_REG_SP)),hex(u.reg_read(UC_ARM_REG_CPSR)),state['stages'][-2:],state['restored'],[hex(u.reg_read(x)) for x in REGS])) from e
+ if arm7_unready:
+  assert state['fault']==81 and not state['done'] and not state['writes'] and (0,0) in state['stages']
+  print('PASS missing ARM7 pause-ready -> visible S0 then S9 81, no card writes',flush=True);return state
  if partial:
   assert state['fault']==1 and not state['done'] and state['own']==14 and state['peer']==12
   print('PASS apply read failure holds both CPUs, no normal release',flush=True);return state
@@ -235,6 +238,7 @@ if '--restore-only' in sys.argv:
  (f/'p4-full-transport-restore.json').write_text(json.dumps({'restore':'PASS','actual_worker_sd_protocol':True,'physical_hardware':False},indent=2));raise SystemExit(0)
 print('Executing wrong ROM identity refusal...',flush=True);make(disk,True,True,identity=True);print('PASS wrong identity returns current game without destructive writes',flush=True)
 print('Executing payload corruption refusal...',flush=True);make(disk,True,True,corrupt=True);print('PASS corrupt payload returns current game without destructive writes',flush=True)
+make({physical[0]:bytes(blank)},arm7_unready=True)
 print('Executing no-checkpoint refusal...',flush=True);make({physical[0]:bytes(blank)},True,True,empty=True);print('PASS no completed slot -> NO SAVE / fresh B, current game preserved',flush=True)
 if '--fast-io' in sys.argv:make(disk,True,True,partial=True)
-(f/'p4-model-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','cross_boot_mutated_restore':'PASS','wrong_identity':'PASS','payload_corruption':'PASS','missing_slot':'PASS','apply_read_failure':'PASS' if '--fast-io' in sys.argv else 'not run','sd_interface':'sector callback' if '--fast-io' in sys.argv else 'actual worker SD protocol','physical_hardware':False,'internal_3d_restored':False},indent=2))
+(f/'p4-model-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','cross_boot_mutated_restore':'PASS','wrong_identity':'PASS','payload_corruption':'PASS','arm7_ready_timeout':'PASS','missing_slot':'PASS','apply_read_failure':'PASS' if '--fast-io' in sys.argv else 'not run','sd_interface':'sector callback' if '--fast-io' in sys.argv else 'actual worker SD protocol','physical_hardware':False,'internal_3d_restored':False},indent=2))

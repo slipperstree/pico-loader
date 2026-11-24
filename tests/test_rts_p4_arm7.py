@@ -10,7 +10,7 @@ subprocess.run([prefix+'objcopy','--dump-section','patch_rts7='+str(obj),str(elf
 loader={p[2]:int(p[0],16) for l in subprocess.check_output([prefix+'nm',str(elf)],text=True).splitlines() if len(p:=l.split())==3}
 hook=0x0380bfa4
 def model7():
- u=Uc(UC_ARCH_ARM,UC_MODE_ARM)
+ u=Uc(UC_ARCH_ARM,UC_MODE_ARM);u.ctl_set_cpu_model(UC_CPU_ARM_TI925T)
  for a,n in [(0x02000000,0x400000),(0x03000000,0x800000),(0x03800000,0x10000),(0x04000000,0x2000),(0x04100000,0x1000)]:u.mem_map(a,n)
  u.mem_write(base,b'\0'*meta['memory_bytes']);u.mem_write(base,bytes(image));u.mem_write(hook,obj.read_bytes());u.mem_write(0x04000241,b'\x03');half(u,0x04000184,0x8100)
  names={'rts7_diagnostic_address':syms['gRtsM2']+28,'rts7_read_busy_address':0x0380bda4,'rts7_write_busy_address':0x0380bdf0,'rts7_clock_address':syms['gRtsM2Frames'],'rts7_mailbox_address':syms['gRtsArm7Mailbox'],'rts7_capture_address':syms['rtsArm7CaptureContext'],'rts7_service_address':syms['rtsArm7CaptureService'],'rts7_operation_address':syms['gRtsP4']+4,'rts7_begin_address':syms['rtsP4Arm7Begin']|1,'rts7_loop_address':syms['rtsP4Arm7Entry']}
@@ -29,7 +29,7 @@ for mask in (0x381,0x382):
    state['own']=(v>>8)&15
    if state['own']==11:state['peer']=10
    if state['own']==12:state['park']=True
- def enter(cpu,a,n,d):state['entered']=True;assert syms['gRtsP4Arm7Stack']<=cpu.reg_read(UC_ARM_REG_SP)<=syms['gRtsP4Arm7Stack']+512
+ def enter(cpu,a,n,d):state['entered']=True;assert syms['gRtsP4Arm7Stack']<=cpu.reg_read(UC_ARM_REG_SP)<=syms['gRtsP4Arm7Stack']+meta['arm7_stack_bytes']
  u.hook_add(UC_HOOK_MEM_READ,read,begin=0x04000000,end=0x04100003);u.hook_add(UC_HOOK_MEM_WRITE,write)
  u.hook_add(UC_HOOK_CODE,enter,begin=syms['rtsP4Arm7Loop'],end=syms['rtsP4Arm7Loop'])
  for i in range(31):
@@ -46,8 +46,8 @@ u=model7();mail=syms['gRtsArm7Mailbox'];ctrl=syms['gRtsP4'];scratch=syms['gRtsP4
 u.mem_write(0x03800000,capture[512+0x40c200:512+0x41c200]);u.mem_write(0x03000000,capture[512+0x41c200:512+0x424200]);u.mem_write(0x037f8000,capture[512+0x41c200:512+0x424200]);u.mem_write(mail+544,ctx)
 put(u,mail+32,*([0xdeadbeef]*128));put(u,scratch,0x31525341,1,0x807f,512,0,0);put(u,ctrl+128,1,0x11223344)
 put(u,syms['gRtsSoundShadow']+400+16*4,0x0200807f) # master/bias packed
-put(u,mail,2,1,0,0,0)
-state={'line':192,'next':0,'sent':[],'ready':False};commands=[3,4,5]
+put(u,mail,1,1,0,0,0)
+state={'line':192,'next':0,'sent':[],'ready':False,'lowest_sp':syms['gRtsP4Arm7Stack']+meta['arm7_stack_bytes']};commands=[2,3,4,5]
 def read(cpu,ac,a,n,v,d):
  if a==0x04000180:half(cpu,a,10)
  elif a==0x04000006:state['line']=(state['line']+17)%263;half(cpu,a,state['line'])
@@ -55,15 +55,25 @@ def read(cpu,ac,a,n,v,d):
  elif a==mail:
   if get(cpu,mail+4)==get(cpu,mail+8) and state['next']<len(commands):
    command=commands[state['next']];state['next']+=1;put(cpu,mail,command,state['next']+1)
+   if command==2:put(cpu,mail+32,*([0xdeadbeef]*128))
  elif a==ctrl+12 and state['ready']:put(cpu,a,1)
 def write(cpu,ac,a,n,v,d):
+ sp=cpu.reg_read(UC_ARM_REG_SP)
+ if base<=sp<limit:
+  state['lowest_sp']=min(state['lowest_sp'],sp)
+  assert sp>=syms['gRtsP4Arm7Stack'],'ARM7 main stack overflow'
  if a==0x04000188:state['sent'].append(v)
  elif a==ctrl+8 and v==1:state['ready']=True
  if 0x03000000<=a<0x03008000:cpu.mem_write(0x037f8000+(a&32767),v.to_bytes(n,'little'))
 u.hook_add(UC_HOOK_MEM_READ,read,begin=0x04000000,end=0x04100003);u.hook_add(UC_HOOK_MEM_READ,read,begin=mail,end=mail+19);u.hook_add(UC_HOOK_MEM_READ,read,begin=ctrl+12,end=ctrl+15);u.hook_add(UC_HOOK_MEM_WRITE,write)
 u.reg_write(UC_ARM_REG_CPSR,0xd2);u.reg_write(UC_ARM_REG_SP,0x0380f000);u.reg_write(UC_ARM_REG_LR,0x03809000)
+def assertArm(cpu,a,n,d):
+ assert not cpu.reg_read(UC_ARM_REG_CPSR)&32,'ARM7 capture service entered in Thumb mode'
+u.hook_add(UC_HOOK_CODE,assertArm,begin=syms['rtsArm7CaptureService'],end=syms['rtsArm7CaptureService'])
 u.emu_start(syms['rtsP4Arm7Entry'],c[19]&~1,count=200000)
-assert u.reg_read(UC_ARM_REG_PC)==c[19]&~1 and state['ready'] and state['next']==3 and state['sent']==[0x11223344]
+assert u.reg_read(UC_ARM_REG_PC)==c[19]&~1 and state['ready'] and state['next']==4 and state['sent']==[0x11223344]
 assert bytes(u.mem_read(0x03800000,512))==struct.pack('<128I',*([0xdeadbeef]*128))
 assert u.reg_read(UC_ARM_REG_SP)==c[2]+48 and u.reg_read(UC_ARM_REG_CPSR)==c[3]
-print('PASS actual ARM7 RPC 2/3/4/5: private sector write, FIFO/audio preparation, coherent release -> saved IRQ without private-stack return')
+print('PASS actual ARM7 RPC 1/2/3/4/5: private sector write, FIFO/audio preparation, coherent release -> saved IRQ without private-stack return')
+
+print("ARM7 maximum observed stack:",syms["gRtsP4Arm7Stack"]+meta["arm7_stack_bytes"]-state["lowest_sp"],"/",meta["arm7_stack_bytes"])

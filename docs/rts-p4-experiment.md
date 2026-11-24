@@ -1,4 +1,4 @@
-# P4.0 persistent save/load experiment
+# P4 persistent save/load experiment
 
 P4 connects the existing state primitives to live DSPico hotkeys for one
 host-verified A2GJ ROM/SDK 3.1 profile. It is an opt-in research build, not a
@@ -9,6 +9,38 @@ Save uses L+R+Down+A; load uses L+R+Down+B, held for 30 VBlanks. A single
 the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
+
+## P4.1: first hardware pause failure
+
+On 414 hardware, P4.0 froze after the save hotkey without a visible progress
+line. The returned `.rts` is still phase 0, sequence 0, with an all-zero
+payload; no snapshot transaction was started. This does not establish the
+later capture-service bug below as the cause of this early hardware freeze.
+
+The actual Thumb ARM7 RPC command-1 call was not covered by the earlier
+combined model (its Python peer called the ARM helper directly). Executing
+that call reproduces an ARM service being entered in Thumb mode: missing ELF
+function types prevented an interworking veneer. Both capture assembly
+entries are now typed and command 1 is exercised through the real C loop.
+
+ARM7's C preflight now runs on its independent main-RAM stack after C is
+published. The private hook clears a pause-ready flag before publishing C;
+ARM7 publishes ready only after sampling audio/FIFO state. ARM9 opens its
+guarded progress display at S0 and waits for this flag with a finite budget.
+Missing readiness shows S9 0081 before card writes, instead of an unlimited
+unobservable wait. Early refusal restores the temporary display correctly.
+
+Tests select ARM946 and an ARMv4T surrogate (TI925T) for ARM9/ARM7 respectively.
+The real outer ARM9 wrapper reaches S0; commands 1..5 run through the real
+ARM7 loop; the missing-ready path fails closed without card writes. ARM7's
+observed maximum stack is 72 of 384 bytes. The fixed arena remains 20480
+bytes; CPU9-owned flags share their own cache line to retain the memory budget.
+The full restore/refusal matrix remains covered. Physical pause/save still
+needs another test; do not infer hardware success from these local models.
+
+The two-to-three-second delay before the launch prompt is consistent with
+the new program fingerprint and, on first launch, file preallocation. Those
+checks are retained. No full-ROM hash is performed on each boot.
 
 ## Fixed file and identity
 

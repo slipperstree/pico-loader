@@ -6,6 +6,7 @@
 .global rtsArm7CaptureContext, rtsArm7CaptureService
 // r0=mailbox, r1=parked SP, r2=original CPSR, r3=original IME.
 // Preserves r4-r11 (including their current-mode banks), SP and return LR.
+.type rtsArm7CaptureContext,%function
 rtsArm7CaptureContext:
     add r0,r0,#544
     str lr,[r0,#24]             // Temporary helper return; cleared before publish.
@@ -107,6 +108,7 @@ capture_bad_mode:
     bx lr
 
 // r0=mailbox, caller parks on its original stack but this helper never uses it.
+.type rtsArm7CaptureService,%function
 rtsArm7CaptureService:
     ldr r1,[r0]
     cmp r1,#1
