@@ -5,7 +5,7 @@ from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRIT
 from unicorn.arm_const import *
 root=Path(sys.argv[1]).resolve();model=Path(__file__).with_name('test_rts_p4_worker.py')
 exec(compile(model.read_text().split('disk={physical[0]:bytes(blank)}')[0],str(model),'exec'),globals())
-elf=root/'build/picoLoader9_DSPICO_restore_p4.elf';obj=root/'build/rts-worker-p4/hook7.bin'
+elf=root/('build/picoLoader9_DSPICO_trace_p43.elf' if TRACE else 'build/picoLoader9_DSPICO_restore_p4.elf');obj=f/'hook7.bin'
 subprocess.run([prefix+'objcopy','--dump-section','patch_rts7='+str(obj),str(elf)],check=True)
 loader={p[2]:int(p[0],16) for l in subprocess.check_output([prefix+'nm',str(elf)],text=True).splitlines() if len(p:=l.split())==3}
 hook=0x0380bfa4
@@ -19,7 +19,7 @@ def model7():
 for mask,cancel in ((0x381,False),(0x382,False),(0x381,True)):
  u=model7();done=0x03809000;
  if cancel:put(u,hook+loader['rts7_spin_budget']-loader['__start_patch_rts7'],32)
- state={'own':0,'peer':0,'line':192,'park':False,'ticks':0,'entered':False};sp=0x0380f000
+ state={'own':0,'peer':0,'line':192,'park':False,'ticks':0,'entered':False,'checkpoints':[]};sp=0x0380f000
  def read(cpu,ac,a,n,v,d):
   if a==0x04000130:half(cpu,a,0x3ff^mask)
   elif a==0x04000180:
@@ -34,6 +34,7 @@ for mask,cancel in ((0x381,False),(0x382,False),(0x381,True)):
    assert a==syms['gRtsM2']+28,'New main-RAM work occurred before ARM9 ACK/C'
   if a==0x04000180:
    state['own']=(v>>8)&15
+   if TRACE and 1<=state['own']<=10:state['checkpoints'].append(state['own'])
    if state['own']==11:state['peer']=10
    if state['own']==12:
     assert get(cpu,syms['gRtsArm7Mailbox']+544)==0,'Capture ran before C/visible ARM9 phase'
@@ -47,7 +48,9 @@ for mask,cancel in ((0x381,False),(0x382,False),(0x381,True)):
   u.emu_start(hook,done,count=1000000);assert u.reg_read(UC_ARM_REG_PC)==done and u.reg_read(UC_ARM_REG_SP)==sp+8
   assert [u.reg_read(x) for x in REGS[2:]]==[0x12340000+j for j in range(11)]
  assert state['park'] and state['entered']==(not cancel)
- if not cancel:assert get(u,syms['gRtsP4']+4)==(mask==0x382)
+ if not cancel:
+  assert get(u,syms['gRtsP4']+4)==(mask==0x382)
+  if TRACE:assert state['checkpoints']==list(range(1,11)),state['checkpoints']
  else:assert get(u,syms['gRtsArm7Mailbox']+544)==0
  assert u.reg_read(UC_ARM_REG_CPSR)==0x60000092
  print('PASS actual ARM7 VBlank hotkey',hex(mask),'cancel before start' if cancel else 'start accepted','-> own main-RAM stack, clock, normal release, exact private epilogue ABI')

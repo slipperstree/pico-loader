@@ -10,6 +10,33 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.4: bound the cache-off ARM7 start and expose peer checkpoints
+
+Hardware P4.3 reached S2 0033: CPU capture and the fused cache transition
+completed, but the subsequent start call did not return. The returned slot is
+still phase 0 / sequence 0, with an all-zero payload. No snapshot was written.
+
+The start wait now uses direct volatile accesses: D-cache and write buffering
+are already off, so per-iteration cache invalidation and the initial drain are
+unnecessary. A local VCOUNT deadline (180 scanline wraps, about three seconds)
+plus a finite spin fallback bounds this loop without relying on the ARM7 clock.
+This removes unnecessary maintenance; it does not establish it as the cause.
+
+The trace build adds S2 0040 (entry), 0041 (ready cleared), and 0042 (start 8
+sent). ARM7 publishes IPCSYNC checkpoints, displayed by ARM9 as S2 0061..0070:
+received start, saved registers, switched stack, before capture, System bank,
+SVC bank, FIQ bank, capture returned, C loop entry, audio/FIFO preparation done.
+Fast transitions may be skipped on screen. S2 0072 means peer remains at C.
+If readiness is not published before the deadline, S9 8100 + last peer nibble
+holds both CPUs without SD writes; e.g. 8112 means no advance from C. This is a
+diagnostic hold, not a resumable error screen. Do not keep waiting for card I/O.
+
+Tests execute all ten ARM7 checkpoints through the actual private hook and
+verify its original IRQ frame/epilogue ABI. The ARM9 model rejects cache
+maintenance during this start wait and verifies the no-ready timeout without
+card writes. The build remains save-only (load refuses with 1007) and reserves
+18944 bytes within the existing 20 KiB arena. Physical verification is pending.
+
 ## P4.3: S2 trace and fused cache transition
 
 Hardware P4.2 reached dimming and S2 0000, then stopped. The returned slot

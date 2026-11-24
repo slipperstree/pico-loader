@@ -203,7 +203,15 @@ rts7_m2_guard_done:
     subs r5,r5,#1
     bne 82b
     b rts7_m2_fault
-83: mov r0,r10
+83:
+#ifdef PICO_RTS_CPU_TRACE
+    ldr r0,rts7_ipc
+    ldrh r1,[r0]
+    bic r1,r1,#0xf00
+    orr r1,r1,#0x100
+    strh r1,[r0] // checkpoint 1: received explicit start 8
+#endif
+    mov r0,r10
     mov r1,sp
     mov r2,r8
     mov r3,r9

@@ -101,9 +101,10 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  u.hook_add(UC_HOOK_MEM_READ,rpc,begin=mail+8,end=mail+11)
  # ARM7 preparation is now triggered by ARM9's explicit start nibble 8,
  # after visible feedback and D-cache off. No FIFO/audio work happens here.
- cache={'after_clean':False,'dirty':{},'transitions':0}
+ cache={'after_clean':False,'dirty':{},'transitions':0,'waiting':False}
  def coproc(cpu,a,n,d):
   if cpu.reg_read(UC_ARM_REG_CPSR)&32:return
+  assert not cache['waiting'],'Cache maintenance executed during cache-off ARM7 wait'
   ins=get(cpu,a);key=((ins>>16)&15,ins&15,(ins>>5)&7);rd=(ins>>12)&15
   cpreg=(REGS+[UC_ARM_REG_SP,UC_ARM_REG_LR,UC_ARM_REG_PC])[rd]
   if ins&(1<<20):cpu.reg_write(cpreg,cp[key])
@@ -195,7 +196,10 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  done9=0x020f0000
  def done(cpu,a,n,d):state['done']=True;cpu.emu_stop()
  u.hook_add(UC_HOOK_CODE,done,begin=done9,end=done9)
- def stage(cpu,a,n,d):state['stages'].append((cpu.reg_read(UC_ARM_REG_R0),cpu.reg_read(UC_ARM_REG_R1)))
+ def stage(cpu,a,n,d):
+  st,val=cpu.reg_read(UC_ARM_REG_R0),cpu.reg_read(UC_ARM_REG_R1);state['stages'].append((st,val))
+  if st==2 and val==40:cache['waiting']=True
+  if (st==2 and val==34) or st==9:cache['waiting']=False
  u.hook_add(UC_HOOK_CODE,stage,begin=syms['progress'],end=syms['progress'])
  def resume(cpu,a,n,d):
   if state['restored']:state['done']=True;cpu.emu_stop()
@@ -213,8 +217,8 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   assert (8,256) in state['stages'] and 8!=state['own'] and fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa]
   print('PASS refusal before start: no SD, no unstarted FIFO replay, current game resumes',flush=True);return state
  if arm7_unready:
-  assert state['fault']==81 and not state['done'] and not state['writes'] and (0,0) in state['stages'] and (2,0) in state['stages']
-  print('PASS missing ARM7 pause-ready -> visible S0/S2 then S9 81, no card writes',flush=True);return state
+  assert state['fault']==(8112 if TRACE else 81) and not state['done'] and not state['writes'] and (0,0) in state['stages'] and (2,0) in state['stages']
+  print('PASS missing ARM7 pause-ready -> visible S0/S2 then bounded S9 timeout, no card writes',flush=True);return state
  if partial:
   assert state['fault']==1 and not state['done'] and state['own']==14 and state['peer']==12
   print('PASS apply read failure holds both CPUs, no normal release',flush=True);return state

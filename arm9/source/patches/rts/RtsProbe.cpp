@@ -290,7 +290,7 @@ void InstallRtsProbeArm7(PatchContext& context, u32 cheatsLength, void* workspac
 #ifdef PICO_RTS_VIDEO_CAPTURE
 #ifdef PICO_RTS_RESTORE_PROBE
 #ifdef PICO_RTS_CPU_TRACE
-    rtsProbeMessage("RTS research: CPU trace P4.3\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2 number.");
+    rtsProbeMessage("RTS research: ARM7 trace P4.4\nSave-path diagnosis.\nLoad disabled in this build.\nHold L+R+Down+A.\nReport last S2/S9 line.");
 #else
     rtsProbeMessage("RTS research: restore P4.2\nPersistent checkpoint test.\nSave: L+R+Down+A\nLoad: L+R+Down+B\nAudio restarts. 3D incomplete.");
 #endif

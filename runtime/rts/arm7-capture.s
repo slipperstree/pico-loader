@@ -2,6 +2,15 @@
 .cpu arm7tdmi
 .syntax unified
 .arm
+.macro capture_trace number
+.ifdef RTS_TRACE_CPU
+    ldr r2,=0x04000180
+    ldrh r3,[r2]
+    bic r3,r3,#0xf00
+    orr r3,r3,#(\number<<8)
+    strh r3,[r2]
+.endif
+.endm
 .section .text.arm7capture,"ax"
 .global rtsArm7CaptureContext, rtsArm7CaptureService
 // r0=mailbox, r1=parked SP, r2=original CPSR, r3=original IME.
@@ -43,6 +52,7 @@ copy_frame:
     str lr,[r0,#84]
     mov r3,#0
     str r3,[r0,#88]
+    capture_trace 5
     orr r2,r1,#18
     msr cpsr_c,r2
     str sp,[r0,#92]
@@ -55,6 +65,7 @@ copy_frame:
     str lr,[r0,#108]
     mrs r3,spsr
     str r3,[r0,#112]
+    capture_trace 6
     orr r2,r1,#23
     msr cpsr_c,r2
     str sp,[r0,#116]
@@ -75,6 +86,7 @@ copy_frame:
     str r3,[r0,#148]
     add r2,r0,#152
     stmia r2,{r8-r12}
+    capture_trace 7
     ldr r1,[r0,#28]
     msr cpsr_cxsf,r1
     // Calling the helper replaced the current bank's LR. Record pre-call LR

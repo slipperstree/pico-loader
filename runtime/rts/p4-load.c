@@ -24,17 +24,38 @@ void rtsP4Arm9Begin(void)
 }
 u32 rtsP4Start7(void)
 {
+    // Caller already disabled D-cache AND write buffering. Direct volatile
+    // stores/reads are sufficient: no cache maintenance in this wait path.
+#ifdef PICO_RTS_CPU_TRACE
+    RtsP4Progress(2,40);
+#endif
     gRtsP4.ready=0;
-    rtsP4Drain();
+#ifdef PICO_RTS_CPU_TRACE
+    RtsP4Progress(2,41);
+#endif
     R16(0x04000180)=(R16(0x04000180)&~0xf00u)|0x800;
-
-    for(u32 spins=0x100000;spins;--spins)
+#ifdef PICO_RTS_CPU_TRACE
+    RtsP4Progress(2,42);
+#endif
+    u32 previous=R16(0x04000006),frames=0,last=~0u;
+    for(u32 spins=0x400000;spins;--spins)
     {
-        rtsP4InvalidateLine((u32)&gRtsP4);
         if(gRtsP4.ready){started7=1;RtsP4Heartbeat(0);return 1;}
+        u32 peer=R16(0x04000180)&15;
+        if(peer!=last)
+        {
+            last=peer;
+#ifdef PICO_RTS_CPU_TRACE
+            RtsP4Progress(2,60+peer);
+#endif
+        }
+        u32 line=R16(0x04000006);
+        if(line<previous && ++frames>=180)return 0;
+        previous=line;
     }
     return 0;
 }
+
 int rtsP4Request(u32 command,u32 block)
 {
     volatile RtsArm7Mailbox* m=&gRtsArm7Mailbox;u32 seq=m->request+1;

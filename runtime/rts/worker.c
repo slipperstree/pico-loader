@@ -256,7 +256,14 @@ static void signalDone(void)
     rtsP4ReplayCurrent();
 #endif
     REG16(IPC)=(REG16(IPC)&~0xf00u)|0xd00;
-    for(u32 i=0;i<WAIT_LIMIT;++i)if((REG16(IPC)&15)!=12)return;
+    for(u32 i=0;i<WAIT_LIMIT;++i)
+    {
+#ifdef PICO_RTS_CPU_TRACE
+        if((REG16(IPC)&15)==0)return; // ARM7 trace uses non-C status nibbles.
+#else
+        if((REG16(IPC)&15)!=12)return;
+#endif
+    }
 }
 __attribute__((noreturn)) static void fault(u32 code)
 {
@@ -476,7 +483,14 @@ void rtsM2Run(const u32* entryRegs)
 #ifdef PICO_RTS_CPU_TRACE
     progress(2,33);
 #endif
-    if(!rtsP4Start7())fault(81);
+    if(!rtsP4Start7())
+    {
+#ifdef PICO_RTS_CPU_TRACE
+        fault(8100+(REG16(IPC)&15));
+#else
+        fault(81);
+#endif
+    }
 #ifdef PICO_RTS_CPU_TRACE
     progress(2,34);
 #endif

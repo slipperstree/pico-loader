@@ -54,11 +54,20 @@ static void restoreDevice7(void)
     R32(0x04000214)=~p[18];R32(0x04000210)=p[17];
 }
 __attribute__((noreturn)) static void stop(void){for(;;)__asm__ volatile("nop");}
+#ifdef PICO_RTS_CPU_TRACE
+static void checkpoint(u32 n){R16(0x04000180)=(R16(0x04000180)&~0xf00u)|(n<<8);}
+#endif
 void rtsP4Arm7Loop(u32 originalIpc,u32 operation)
 {
+#ifdef PICO_RTS_CPU_TRACE
+    checkpoint(9);
+#endif
     if(gRtsArm7Mailbox.status)gRtsM2.info.reserved|=8192;
     rtsP4Arm7Begin(originalIpc);
     gRtsP4.operation=operation;
+#ifdef PICO_RTS_CPU_TRACE
+    checkpoint(10);
+#endif
     gRtsP4.ready=1; // Publish sampled audio/FIFO state before ARM9 uses it.
     volatile RtsArm7Mailbox* m=&gRtsArm7Mailbox;
     u32 previous=R16(0x04000006),lastPeer=10,budget=0x04000000,destructive=0;
