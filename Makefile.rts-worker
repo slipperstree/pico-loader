@@ -16,6 +16,12 @@ RTS_IDENTITY_INPUTS := arm9/source/patches/rts/RtsProbe.cpp arm9/source/patches/
 RTS_EXTRA_FLAGS += -DPICO_RTS_RESTORE_PROBE
 RTS_EXTRA_OBJ += $(addprefix $(RTS_BUILD)/,arm9-cpu-capture.o arm9-state-restore.o arm7-restore.o arm9-continuation.o arm7-restore-validator.o sound-restart.o sound-observer.o p4-arm7.o p4-arm7-entry.o p4-load.o)
 endif
+ifeq ($(PICO_RTS_CPU_TRACE),1)
+RTS_EXTRA_OBJ := $(subst build/rts-worker-p4/,build/rts-worker-p43/,$(RTS_EXTRA_OBJ))
+RTS_BUILD := build/rts-worker-p43
+RTS_EXTRA_FLAGS += -DPICO_RTS_CPU_TRACE
+RTS_TRACE_AS_FLAGS := -Wa,--defsym,RTS_TRACE_CPU=1
+endif
 RTS_FLAGS := -mcpu=arm946e-s -marm -Os -ffreestanding -fno-builtin -fno-jump-tables -fno-stack-protector -fno-pic -fno-tree-loop-distribute-patterns -ffunction-sections -fdata-sections -Icommon -Wall -Wextra
 
 $(RTS_BUILD)/worker.o $(RTS_EXTRA_OBJ): $(wildcard common/Rts*.h)
@@ -32,7 +38,7 @@ $(RTS_BUILD)/video-capture.o: runtime/rts/video-capture.c common/RtsVideoCapture
 	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_MODE) -std=c17 -c $< -o $@
 
 $(RTS_BUILD)/arm9-cpu-capture.o: runtime/rts/arm9-cpu-capture.s
-	$(PREFIX)gcc $(RTS_FLAGS) -c $< -o $@
+	$(PREFIX)gcc $(RTS_FLAGS) $(RTS_TRACE_AS_FLAGS) -c $< -o $@
 $(RTS_BUILD)/arm9-state-restore.o: runtime/rts/arm9-state-restore.s
 	$(PREFIX)gcc $(RTS_FLAGS) -c $< -o $@
 $(RTS_BUILD)/arm7-restore.o: runtime/rts/arm7-restore.s

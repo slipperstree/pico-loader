@@ -50,12 +50,13 @@ static void clear(void* dst,u32 bytes)
 }
 // One 96x8 pixel line, with its exact VRAM bytes saved for restoration.
 // Only digits, M/S, space and slash are needed for the stage/progress display.
-static const u8 digits[10][5]={
+const u8 gRtsDigits[10][5]={
  {0x3e,0x51,0x49,0x45,0x3e},{0,0x42,0x7f,0x40,0},
  {0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4b,0x31},
  {0x18,0x14,0x12,0x7f,0x10},{0x27,0x45,0x45,0x45,0x39},
  {0x3c,0x4a,0x49,0x49,0x30},{1,0x71,9,5,3},
  {0x36,0x49,0x49,0x49,0x36},{6,0x49,0x49,0x29,0x1e}};
+#define digits gRtsDigits
 static u8 glyph(u32 c,u32 x)
 {
     if(c>='0' && c<='9')return digits[c-'0'][x];
@@ -436,15 +437,25 @@ void rtsM2Run(const u32* entryRegs)
     progress(2,0);
 #ifdef PICO_RTS_RESTORE_PROBE
     rtsP4FreezeHeader();
+#ifdef PICO_RTS_CPU_TRACE
+    progress(2,30);
 #endif
-    flushCaches();
-    // MPU must remain enabled for I-cache to work on ARM946E-S. This target's
-    // SDK maps main RAM, MMIO/VRAM, DTCM and the ITCM data alias already; the
-    // secure stub has opened region 2. Disable D-cache and write buffering only.
+#endif
     u32 oldCi=initialCpu[3],oldBuffer=initialCpu[4];
     h->reserved[2]=oldCi;h->reserved[3]=oldBuffer;
     u32 transientCi=oldCi|2u,transientControl=(control&~4u)|0x1000u;
+#ifdef PICO_RTS_RESTORE_PROBE
+    // Prepare C locals/header before the final clean. The assembly transition
+    // saves its own registers before cleaning and has no intervening stack write.
+    rtsFlushCachesAndEnter(transientCi,0,transientControl,(RtsArm9CpuState*)s->readback);
+#else
+    flushCaches();
     setCache(transientCi,0,transientControl);
+#endif
+#ifdef PICO_RTS_CPU_TRACE
+    progress(2,32);
+#endif
+
 #ifdef PICO_RTS_ARM7_CAPTURE
 #ifndef PICO_RTS_RESTORE_PROBE
     if(gRtsArm7Mailbox.context.magic!=RTS_ARM7_CONTEXT_MAGIC || gRtsArm7Mailbox.status){ioState.error=25;fault(8);}
@@ -462,15 +473,28 @@ void rtsM2Run(const u32* entryRegs)
 #ifdef PICO_RTS_RESTORE_PROBE
     // S2 is already visible. D-cache and write buffering are OFF before
     // telling ARM7 to start its new main-RAM capture/prepare path.
+#ifdef PICO_RTS_CPU_TRACE
+    progress(2,33);
+#endif
     if(!rtsP4Start7())fault(81);
+#ifdef PICO_RTS_CPU_TRACE
+    progress(2,34);
+#endif
     u32 p4Reason=gRtsP4.error|s->info.reserved;
     if(!p4Reason && (gRtsArm7Mailbox.context.magic!=RTS_ARM7_CONTEXT_MAGIC || gRtsArm7Mailbox.status))p4Reason=8192;
     if(!p4Reason)p4Reason=rtsP4FreezePayload();
+#ifdef PICO_RTS_CPU_TRACE
+    progress(2,35);
+#endif
     if(p4Reason){progress(8,p4Reason);waitRefusalAck();goto cleanup;}
     if(gRtsP4.operation)
     {
+#ifdef PICO_RTS_CPU_TRACE
+        progress(8,1007);waitRefusalAck();goto cleanup;
+#else
         RtsP4CardState card={aux,oldCommand0,oldCommand1,oldCardControl,oldExmem};
         p4Reason=rtsP4Load(&card);progress(8,p4Reason);waitRefusalAck();goto cleanup;
+#endif
     }
 #endif
     progress(3,0);

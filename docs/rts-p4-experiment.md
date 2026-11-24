@@ -10,6 +10,39 @@ the basename. A completed slot persists across reboot; missing/incomplete
 slots show `NO SAVE B` and return only after a fresh B press. Multiple folders
 with the same ROM basename have independent slots. Multi-slot UI is future work.
 
+## P4.3: S2 trace and fused cache transition
+
+Hardware P4.2 reached dimming and S2 0000, then stopped. The returned slot
+remains phase 0 / sequence 0, with no payload written. This narrows the boundary
+to ARM9 CPU capture, cache switching, or the subsequent explicit ARM7 start.
+
+Disassembly of that exact P4.2 worker proves two stack stores (`sp+12`, `sp+20`)
+and header stores after `flushCaches` returns and before disabling D-cache.
+Those new dirty values need not reach backing RAM when D-cache is disabled.
+The prior model treated all stores as immediately visible backing memory.
+An extended model catches the old binary's post-clean writes before card I/O.
+This is a definite defect, not conclusive proof of the unique hardware hang.
+
+`rtsFlushCachesAndEnter` now pushes/saves arguments before cleaning and performs
+the entire clean + cache-control switch in one ARM primitive. No C call or new
+stack store intervenes. Optional stamp 31 only uses disposable CPU-record
+padding and uncached VRAM; the model discards those cached padding stores at
+the transition and checks no live stack/header data is lost.
+
+The opt-in `PICO_RTS_CPU_TRACE=1` artifact has separate loader/object directories.
+It is save-only; the load hotkey refuses with 1007. Unlinked load code makes room
+for 28 stackless assembly stamps plus C boundary markers 29..35 within the
+existing first-target arena ceiling. Each stamp preserves scratch registers,
+banked LR and flags in padding; it never pushes onto an arbitrary mode stack.
+The complete captured 512-byte state matches the uninstrumented primitive.
+
+Steps 1..8 cover mode banks; 9..27 cover the 19 CP15 reads; 28 publishes the
+record; 29 returns to C; 30 completes header metadata; 31 completes the clean;
+32 disables D-cache; 33 requests ARM7 start; 34 sees ready; 35 completes payload
+preflight. The register encodings were checked against the
+[ARM946E-S Technical Reference Manual](https://documentation-service.arm.com/static/5e8e3ee588295d1e18d3aa82).
+The exact last hardware stamp, not just broad S2, is still required.
+
 ## P4.2: defer capture until visible ARM9 feedback
 
 P4.1 also froze on hardware with no dimming and no progress. Its returned

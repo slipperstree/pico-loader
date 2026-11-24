@@ -22,6 +22,7 @@ _Static_assert(offsetof(RtsArm9CpuState,cp15)==108,"CPU CP15 ABI");
 // Unlinked research. Call with IRQ/FIQ masked in System mode before changing
 // cache/MPU state. Caller zeroes the struct. Override worker SP/LR and already
 // opened MPU region 2 with the original saved game values.
+void rtsFlushCachesAndEnter(uint32_t ci,uint32_t buffer,uint32_t control,RtsArm9CpuState* disposableTrace);
 void rtsCaptureArm9Cpu(RtsArm9CpuState*,uint32_t gameSp,uint32_t gameLr,uint32_t originalRegion2);
 #ifdef __cplusplus
 }

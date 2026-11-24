@@ -86,6 +86,9 @@ u32 rtsP4FreezeHeader(void)
 {
     WorkerState* s=&gRtsM2;RtsM2Header* h=&s->header;
     rtsCaptureArm9Cpu((RtsArm9CpuState*)s->readback,h->regs[13],h->regs[14],h->reserved[0]);
+#ifdef PICO_RTS_CPU_TRACE
+    RtsP4Progress(2,29);
+#endif
     memcpy(h->reserved+16,s->readback,184);memcpy(h->reserved+62,&gRtsP4Identity,80);
     h->reserved[15]=RTS_P4_MAGIC;h->reserved[83]=R32(0x04000210);h->reserved[84]=R32(0x04000214);
     h->reserved[85]=((const u32*)h->frameAddress)[2]|((u32)R16(0x04000184)<<16);

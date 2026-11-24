@@ -6,7 +6,7 @@ import hashlib,json,os,struct,subprocess,sys,zlib
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_READ,UC_HOOK_MEM_WRITE,UC_HOOK_MEM_INVALID
 from unicorn.arm_const import *
-r=Path(sys.argv[1]).resolve();capture=Path(sys.argv[2]).read_bytes();h0=struct.unpack('<128I',capture[:512]);f=r/'build/rts-worker-p4'
+r=Path(sys.argv[1]).resolve();capture=Path(sys.argv[2]).read_bytes();h0=struct.unpack('<128I',capture[:512]);TRACE='--p43' in sys.argv;f=r/('build/rts-worker-p43' if TRACE else 'build/rts-worker-p4')
 meta=json.loads((f/'RtsM2Image.json').read_text());original=(f/'worker.bin').read_bytes();base=0x023fa000;limit=base+meta['memory_bytes'];assert limit<=0x023ff000
 prefix=os.environ.get('ARM_NONE_EABI_PREFIX',str(Path(os.environ.get('WONDERFUL_TOOLCHAIN','C:/msys64/opt/wonderful' if os.name=='nt' else '/opt/wonderful'))/'toolchain/gcc-arm-none-eabi/bin/arm-none-eabi-'))
 syms={p[2]:int(p[0],16)-meta['link_base']+base for l in subprocess.check_output([prefix+'nm',str(f/'worker.elf')],text=True).splitlines() if len(p:=l.split())==3}
@@ -101,13 +101,23 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  u.hook_add(UC_HOOK_MEM_READ,rpc,begin=mail+8,end=mail+11)
  # ARM7 preparation is now triggered by ARM9's explicit start nibble 8,
  # after visible feedback and D-cache off. No FIFO/audio work happens here.
+ cache={'after_clean':False,'dirty':{},'transitions':0}
  def coproc(cpu,a,n,d):
   if cpu.reg_read(UC_ARM_REG_CPSR)&32:return
   ins=get(cpu,a);key=((ins>>16)&15,ins&15,(ins>>5)&7);rd=(ins>>12)&15
   cpreg=(REGS+[UC_ARM_REG_SP,UC_ARM_REG_LR,UC_ARM_REG_PC])[rd]
   if ins&(1<<20):cpu.reg_write(cpreg,cp[key])
-  elif key[0]!=7:
-   cp[key]=cpu.reg_read(cpreg)
+  else:
+   value=cpu.reg_read(cpreg)
+   if '--cache-check' in sys.argv:
+    if key==(7,14,2) and value==0xc00003e0:cache['after_clean']=True;cache['dirty']={}
+    if key==(1,0,0) and cp[key]&4 and not value&4:
+     scratch=cfg+296+512+192
+     essential=[a for a in cache['dirty'] if not scratch<=a<scratch+44]
+     assert not essential,('Dirty RAM/stack stores after final cache clean',list(map(hex,essential[:12])))
+     for address,byte in cache['dirty'].items():cpu.mem_write(address,bytes([byte]))
+     cache['transitions']+=1;cache['after_clean']=False
+   if key[0]!=7:cp[key]=value
    if key==(6,2,0) and cp[key]&1:assert a<0x02000800;state['cpclosed']=True
   cpu.reg_write(UC_ARM_REG_PC,a+4)
  # CP15 instructions only occur in ARM sections and the copied secure tail.
@@ -137,6 +147,9 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
  def clock(cpu,ac,a,n,val,d):put(cpu,a,state['polls']//4096)
  u.hook_add(UC_HOOK_MEM_READ,clock,begin=syms['gRtsM2Frames'],end=syms['gRtsM2Frames']+3)
  def write(cpu,ac,a,n,val,d):
+  if '--cache-check' in sys.argv and cache['after_clean'] and cp[(1,0,0)]&4 and 0x02000000<=a<0x02400000:
+   before=bytes(cpu.mem_read(a,n))
+   for i,byte in enumerate(before):cache['dirty'].setdefault(a+i,byte)
   spNow=cpu.reg_read(UC_ARM_REG_SP)
   if stack<=spNow<=stack+1024:state['minsp9']=min(state['minsp9'],spNow)
   if a==0x04000188:fifo7.append(val)
@@ -207,7 +220,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   print('PASS apply read failure holds both CPUs, no normal release',flush=True);return state
  assert state['done'] and state['fault'] is None,{'pc':hex(u.reg_read(UC_ARM_REG_PC)),**{k:v for k,v in state.items() if k not in ('buffer','stages')}}
  assert fifo7==[0x90001234] and fifo9==[0x12345678,0x55aa55aa],(fifo7,fifo9)
- if load and not (corrupt or identity or empty):
+ if load and not (corrupt or identity or empty or TRACE):
   assert state['restored'] and state['cpclosed'];assert u.reg_read(UC_ARM_REG_PC)==pc
   assert bytes(u.mem_read(0x02030000,512))==capture[512+0x30000:512+0x30200]
   assert bytes(a7.mem_read(0x03800000,0x10000))==private
@@ -228,6 +241,7 @@ def make(disk,load=False,mutate=False,corrupt=False,identity=False,partial=False
   print('Verified all RAM/TCM bytes, 19 CP15 registers, general registers, SP/LR/CPSR; maximum observed worker stack',stack+1024-state['minsp9'],flush=True)
  elif load:
   assert not state['restored'] and not state['writes'];assert any(stage==8 for stage,_ in state['stages'])
+  if TRACE:assert (8,1007) in state['stages']
   if empty:assert (8,1001) in state['stages'] and state['readcount']==1
   assert bytes(u.mem_read(0x02030000,16))==b'changed progress'
  else:
@@ -243,6 +257,11 @@ if '--reuse' in sys.argv:
 else:
  print('Executing actual P4 save...',flush=True);a=make(disk);print('PASS full capture, physical extent writes, payload/header CRC, audio shadow and FIFO replay',flush=True)
  privateModel.write_bytes(b''.join(disk[a] for a in physical))
+if TRACE:
+ make(disk,True,True)
+ make({physical[0]:bytes(blank)},arm7_unready=True)
+ (f/'trace-save-results.json').write_text(json.dumps({'build_fingerprint':meta['p4_build_fingerprint'],'worker_image_sha256':hashlib.sha256(original).hexdigest(),'save':'PASS','load_disabled':'PASS','ready_timeout':'PASS','physical_hardware':False},indent=2))
+ print('PASS trace save, load disabled with no card writes, ready timeout',flush=True);raise SystemExit(0)
 print('Executing independent boot / mutated-state P4 restore...',flush=True);b=make(disk,True,True);print('PASS independent runtime instance: validated file -> main/TCM/WRAM/video/audio + ARM9/ARM7 continuation',flush=True)
 if '--restore-only' in sys.argv:
  (f/'p4-full-transport-restore.json').write_text(json.dumps({'restore':'PASS','actual_worker_sd_protocol':True,'physical_hardware':False},indent=2));raise SystemExit(0)
